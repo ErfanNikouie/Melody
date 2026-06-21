@@ -18,6 +18,7 @@ LeaveChannelCallback = Callable[[], Awaitable[None]]
 SendMessageCallback = Callable[[str], Awaitable[None]]
 SendPcmCallback = Callable[[bytes], Awaitable[None]]
 GetBufferSizeCallback = Callable[[], float]
+WaitForAudioEncoderCallback = Callable[[], Awaitable[bool]]
 OnShutdownCallback = Callable[[], Awaitable[None]]
 
 
@@ -35,6 +36,7 @@ class ChannelSession:
         grace_period: float,
         send_pcm: SendPcmCallback,
         get_buffer_size: GetBufferSizeCallback,
+        wait_for_audio_encoder: WaitForAudioEncoderCallback,
         join_channel: JoinChannelCallback,
         leave_channel: LeaveChannelCallback,
         send_message: SendMessageCallback,
@@ -48,6 +50,7 @@ class ChannelSession:
         self._leave_channel = leave_channel
         self._send_message = send_message
         self._request_destroy = on_shutdown
+        self._wait_for_audio_encoder = wait_for_audio_encoder
         self._human_count = 0
         self._grace_task: asyncio.Task[None] | None = None
         self._joined = False
@@ -78,6 +81,8 @@ class ChannelSession:
 
     async def start_playback(self) -> None:
         await self.ensure_joined()
+        if not await self._wait_for_audio_encoder():
+            logger.error("Mumble Opus encoder not ready channel_id=%s", self.channel_id)
         await self.engine.play_current()
 
     async def stop_playback(self, *, clear_all: bool = False) -> None:

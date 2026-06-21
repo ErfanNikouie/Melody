@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from melody.logging import get_logger
 from melody.models import PlaybackState, QueueItem
 from melody.playback.buffer import GlobalBufferPool
-from melody.playback.ffmpeg import FFmpegTranscoder
+from melody.playback.ffmpeg import FRAME_DURATION_SEC, FFmpegTranscoder
 from melody.playback.queue import QueueManager
 from melody.protocols import ISubsonicClient
 
@@ -142,12 +142,12 @@ class PlaybackEngine:
                 if self._stop_event.is_set():
                     break
                 await self._pause_event.wait()
-                while self._get_buffer_size() > 0.5:
-                    await asyncio.sleep(0.01)
                 await self._send_pcm(frame)
                 frames_sent += 1
                 if frames_sent == 1:
                     logger.info("PCM playback started track_id=%s", track.id)
+                # pymumble send_audio emits at real-time; feeding faster only fills the buffer.
+                await asyncio.sleep(FRAME_DURATION_SEC)
         finally:
             code = await transcoder.wait()
             await transcoder.stop()

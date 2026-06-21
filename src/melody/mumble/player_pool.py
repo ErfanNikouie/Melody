@@ -103,6 +103,7 @@ class PlayerPool:
                 grace_period=self._settings.disconnect_grace_period,
                 send_pcm=connection.send_pcm,
                 get_buffer_size=connection.get_buffer_size,
+                wait_for_audio_encoder=connection.wait_for_audio_encoder,
                 join_channel=lambda cid=channel_id: connection.join_channel(cid),
                 leave_channel=lambda: asyncio.sleep(0),
                 send_message=lambda msg, cid=channel_id: connection.send_channel_message(cid, msg),
@@ -115,6 +116,8 @@ class PlayerPool:
         if self._loop is None:
             raise RuntimeError("PlayerPool loop not set")
         await player.start(self._loop)
+        if not await connection.wait_for_audio_encoder():
+            logger.warning("Opus encoder not ready user=%s channel_id=%s", username, channel_id)
         player.session.mark_joined()
         logger.info(
             "Player assigned user=%s channel_id=%s channel_name=%s active=%s",
