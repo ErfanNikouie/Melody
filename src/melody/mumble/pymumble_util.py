@@ -22,17 +22,23 @@ class ParsedTextMessage:
     target_channel_id: int | None
 
 
-def load_pymumble() -> tuple[Any, Any, Any, Any]:
-    """Return (pymumble module, text callback id, connected id, disconnected id)."""
+def load_pymumble() -> tuple[Any, Any, Any, Any, type[Exception]]:
+    """Return (pymumble module, text callback id, connected id, disconnected id, reject error)."""
     import pymumble_py3 as pymumble
     from pymumble_py3.constants import (
         PYMUMBLE_CLBK_CONNECTED,
         PYMUMBLE_CLBK_DISCONNECTED,
         PYMUMBLE_CLBK_TEXTMESSAGERECEIVED,
     )
-    from pymumble_py3.errors import DenyError
+    from pymumble_py3.errors import ConnectionRejectedError
 
-    return pymumble, PYMUMBLE_CLBK_TEXTMESSAGERECEIVED, PYMUMBLE_CLBK_CONNECTED, PYMUMBLE_CLBK_DISCONNECTED, DenyError
+    return (
+        pymumble,
+        PYMUMBLE_CLBK_TEXTMESSAGERECEIVED,
+        PYMUMBLE_CLBK_CONNECTED,
+        PYMUMBLE_CLBK_DISCONNECTED,
+        ConnectionRejectedError,
+    )
 
 
 def parse_text_message(mumble: Any, mess: Any) -> ParsedTextMessage | None:
