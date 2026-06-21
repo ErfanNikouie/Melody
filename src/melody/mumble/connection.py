@@ -113,8 +113,9 @@ class MumbleConnection:
                 stereo=self._stereo,
             )
             if self._stereo:
+                # pymumble only creates sound_output when receive_sound is enabled.
+                self._mumble.set_receive_sound(1)
                 self._mumble.set_codec_profile("audio")
-                self._mumble.set_bandwidth(96000)
             bind_callbacks(
                 self._mumble,
                 on_text=self._handle_text,
@@ -172,6 +173,11 @@ class MumbleConnection:
         if not self._stereo or self._mumble is None:
             return
         try:
+            if not self._has_sound_output():
+                logger.warning("Voice setup skipped user=%s (sound_output missing)", self._username)
+                return
+            if getattr(self._mumble, "server_max_bandwidth", None) is not None:
+                self._mumble.set_bandwidth(96000)
             myself = self._mumble.users.myself
             if myself is None:
                 logger.warning("Voice setup skipped user=%s (myself unknown)", self._username)
@@ -193,8 +199,15 @@ class MumbleConnection:
         except Exception:
             logger.exception("Failed to prepare voice for user=%s", self._username)
 
+    def _has_sound_output(self) -> bool:
+        if self._mumble is None:
+            return False
+        return getattr(self._mumble, "sound_output", None) is not None
+
     async def wait_for_audio_encoder(self, timeout: float = 10.0) -> bool:
         """Wait until pymumble has a working Opus encoder (CodecVersion received)."""
+        if not self._stereo:
+            return False
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
             if await asyncio.to_thread(self._has_audio_encoder):
@@ -204,7 +217,7 @@ class MumbleConnection:
         return False
 
     def _has_audio_encoder(self) -> bool:
-        if self._mumble is None:
+        if not self._has_sound_output():
             return False
         return self._mumble.sound_output.encoder is not None
 
@@ -268,7 +281,7 @@ class MumbleConnection:
         await asyncio.to_thread(self._send_pcm_sync, data)
 
     def _send_pcm_sync(self, data: bytes) -> None:
-        if self._mumble is None:
+        if self._mumble is None or not self._has_sound_output():
             return
         if self._mumble.sound_output.encoder is None:
             logger.warning("Dropped PCM user=%s (Opus encoder not ready)", self._username)
@@ -276,7 +289,7 @@ class MumbleConnection:
         self._mumble.sound_output.add_sound(data)
 
     def get_buffer_size(self) -> float:
-        if self._mumble is None:
+        if self._mumble is None or not self._has_sound_output():
             return 0.0
         return self._mumble.sound_output.get_buffer_size()
 

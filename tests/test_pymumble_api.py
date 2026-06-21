@@ -47,6 +47,14 @@ def test_ssl_wrap_socket_compat_on_modern_python() -> None:
     assert hasattr(ssl, "wrap_socket")
 
 
+def test_stereo_players_enable_receive_sound() -> None:
+    """pymumble (azlux) only allocates sound_output when receive_sound is set."""
+    source = (
+        Path(__file__).resolve().parents[1] / "src" / "melody" / "mumble" / "connection.py"
+    ).read_text(encoding="utf-8")
+    assert "set_receive_sound(1)" in source
+
+
 def test_load_pymumble_imports_without_deny_error() -> None:
     from melody.mumble.pymumble_util import load_pymumble
 
