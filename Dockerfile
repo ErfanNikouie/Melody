@@ -11,7 +11,8 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . \
+    && python -c "import melody"
 
 RUN mkdir -p /tmp/melody-buffer && chown melody:melody /tmp/melody-buffer
 

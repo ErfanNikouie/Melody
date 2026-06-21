@@ -27,13 +27,7 @@ dev = [
 melody = "melody.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["melody"]
-
-[tool.hatch.build.targets.wheel.sources]
-"src" = ""
-
-[tool.hatch.build.targets.sdist]
-include = ["src/melody", "tests", "README.md", "LICENSE"]
+packages = ["src/melody"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
