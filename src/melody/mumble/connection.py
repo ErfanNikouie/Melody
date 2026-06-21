@@ -12,7 +12,6 @@ from melody.mumble.pymumble_util import (
     ParsedTextMessage,
     bind_callbacks,
     get_session_id,
-    is_connection_failed,
     load_pymumble,
     parse_text_message,
 )
@@ -98,6 +97,13 @@ class MumbleConnection:
             return
 
         try:
+            logger.info(
+                "Connecting to Mumble user=%s host=%s port=%s reconnect=%s",
+                self._username,
+                self._host,
+                self._port,
+                self._reconnect,
+            )
             self._mumble = pymumble.Mumble(
                 self._host,
                 self._username,
@@ -113,23 +119,37 @@ class MumbleConnection:
                 on_disconnected=self._handle_disconnected,
             )
             self._mumble.start()
-            self._mumble.is_ready()
-            if is_connection_failed(self._mumble):
-                logger.error("Mumble connection failed user=%s", self._username)
+            # Do not call is_ready() here: pymumble releases its ready lock on a
+            # failed connect attempt too, which would let us exit this thread,
+            # kill reconnect, and surface ConnectionRejectedError in the child.
+            self._mumble.join()
+            if not self._ready.is_set():
+                logger.error(
+                    "Mumble connection ended without connecting user=%s host=%s port=%s",
+                    self._username,
+                    self._host,
+                    self._port,
+                )
                 if self._loop:
                     self._loop.call_soon_threadsafe(self._ready.set)
-                return
-            self._bot_session_id = get_session_id(self._mumble)
-            if self._loop:
-                self._loop.call_soon_threadsafe(self._ready.set)
-            self._mumble.join()
         except connection_rejected_error as exc:
-            logger.error("Mumble connection denied user=%s: %s", self._username, exc)
-            if self._loop:
+            logger.error(
+                "Mumble connection denied user=%s host=%s port=%s: %s",
+                self._username,
+                self._host,
+                self._port,
+                exc,
+            )
+            if self._loop and not self._ready.is_set():
                 self._loop.call_soon_threadsafe(self._ready.set)
         except Exception:
-            logger.exception("Mumble thread failed user=%s", self._username)
-            if self._loop:
+            logger.exception(
+                "Mumble thread failed user=%s host=%s port=%s",
+                self._username,
+                self._host,
+                self._port,
+            )
+            if self._loop and not self._ready.is_set():
                 self._loop.call_soon_threadsafe(self._ready.set)
 
     def _handle_connected(self) -> None:
@@ -140,6 +160,8 @@ class MumbleConnection:
             self._join_channel_sync(self._post_connect_channel)
         if self._on_connected_cb:
             self._on_connected_cb()
+        if self._loop and not self._ready.is_set():
+            self._loop.call_soon_threadsafe(self._ready.set)
 
     def _handle_disconnected(self) -> None:
         logger.warning("Mumble disconnected user=%s (will reconnect=%s)", self._username, self._reconnect)

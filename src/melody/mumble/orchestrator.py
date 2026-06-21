@@ -39,9 +39,17 @@ class MumbleOrchestrator:
 
     async def start(self, loop: asyncio.AbstractEventLoop) -> None:
         self._pool.set_loop(loop)
+        logger.info(
+            "Waiting for Melody coordinator at %s:%s (reconnect enabled)",
+            self._settings.mumble_host,
+            self._settings.mumble_port,
+        )
         await self._coordinator.start(loop)
         if not self._coordinator.connection.is_connected:
-            raise RuntimeError("Melody coordinator failed to connect")
+            raise RuntimeError(
+                f"Melody coordinator failed to connect to "
+                f"{self._settings.mumble_host}:{self._settings.mumble_port}"
+            )
         logger.info("Melody coordinator connected as %s", self._settings.mumble_username)
 
     async def stop(self) -> None:

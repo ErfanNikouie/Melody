@@ -60,13 +60,6 @@ def get_session_id(mumble: Any) -> int | None:
     return int(session) if session is not None else None
 
 
-def is_connection_failed(mumble: Any) -> bool:
-    """True when pymumble reports a failed connection state."""
-    from pymumble_py3.constants import PYMUMBLE_CONN_STATE_FAILED
-
-    return mumble.connected >= PYMUMBLE_CONN_STATE_FAILED
-
-
 def parse_text_message(mumble: Any, mess: Any) -> ParsedTextMessage | None:
     """Parse pymumble TextMessage protobuf into a normalized event."""
     if not mess.HasField("actor"):
