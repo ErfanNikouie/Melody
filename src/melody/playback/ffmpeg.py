@@ -37,6 +37,7 @@ class FFmpegTranscoder:
         return PCM_FRAME_BYTES
 
     async def start(self, *, input_format: str | None = None) -> None:
+        """Decode audio from stdin pipe (legacy)."""
         ffmpeg = find_ffmpeg()
         args = [
             ffmpeg,
@@ -53,8 +54,6 @@ class FFmpegTranscoder:
             args.extend(["-f", input_format])
         args.extend(
             [
-                "-seekable",
-                "0",
                 "-i",
                 "pipe:0",
                 "-f",
@@ -76,6 +75,45 @@ class FFmpegTranscoder:
         )
         self._stderr_task = asyncio.create_task(self._collect_stderr())
 
+    async def start_from_url(self, url: str) -> None:
+        """Decode audio directly from an HTTP(S) stream URL."""
+        ffmpeg = find_ffmpeg()
+        args = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-nostdin",
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            "-reconnect_delay_max",
+            "5",
+            "-probesize",
+            "1M",
+            "-analyzeduration",
+            "5M",
+            "-i",
+            url,
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            str(SAMPLE_RATE),
+            "-ac",
+            str(CHANNELS),
+            "pipe:1",
+        ]
+        self._process = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        self._stderr_task = asyncio.create_task(self._collect_stderr())
+
     async def _collect_stderr(self) -> None:
         if self._process is None or self._process.stderr is None:
             return
@@ -92,13 +130,19 @@ class FFmpegTranscoder:
             return
         if not data:
             return
-        self._process.stdin.write(data)
-        await self._process.stdin.drain()
+        try:
+            self._process.stdin.write(data)
+            await self._process.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     async def close_input(self) -> None:
         if self._process and self._process.stdin:
-            self._process.stdin.close()
-            await self._process.stdin.wait_closed()
+            try:
+                self._process.stdin.close()
+                await self._process.stdin.wait_closed()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     async def read_pcm_frames(self) -> AsyncIterator[bytes]:
         if self._process is None or self._process.stdout is None:
