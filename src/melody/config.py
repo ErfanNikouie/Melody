@@ -61,8 +61,11 @@ class Settings(BaseSettings):
 
     @field_validator("subsonic_url")
     @classmethod
-    def strip_trailing_slash(cls, value: str) -> str:
-        return value.rstrip("/")
+    def normalize_subsonic_url(cls, value: str) -> str:
+        url = value.strip().rstrip("/")
+        if "://" not in url:
+            raise ValueError("SUBSONIC_URL must include a scheme, e.g. http://host.docker.internal:5274")
+        return url
 
     @property
     def prefixes(self) -> list[str]:

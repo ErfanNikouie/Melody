@@ -1,0 +1,53 @@
+"""Tests for Subsonic XML parsing."""
+
+from __future__ import annotations
+
+import xml.etree.ElementTree as ET
+
+from melody.subsonic.xml_utils import parse_playlist, parse_playlist_meta, parse_track
+
+
+def test_parse_track_reads_subsonic_attributes() -> None:
+    element = ET.fromstring(
+        '<song id="abc123" title="Test Song" artist="Test Artist" '
+        'album="Test Album" duration="245" />'
+    )
+    track = parse_track(element)
+    assert track.id == "abc123"
+    assert track.title == "Test Song"
+    assert track.artist == "Test Artist"
+    assert track.album == "Test Album"
+    assert track.duration == 245
+
+
+def test_parse_track_reads_child_elements() -> None:
+    element = ET.fromstring(
+        "<song><id>1</id><title>Legacy</title><artist>A</artist></song>"
+    )
+    track = parse_track(element)
+    assert track.id == "1"
+    assert track.title == "Legacy"
+    assert track.artist == "A"
+
+
+def test_parse_playlist_meta_reads_attributes() -> None:
+    element = ET.fromstring('<playlist id="pl1" name="My Playlist" />')
+    playlist = parse_playlist_meta(element)
+    assert playlist.id == "pl1"
+    assert playlist.name == "My Playlist"
+
+
+def test_parse_playlist_reads_entry_attributes() -> None:
+    element = ET.fromstring(
+        """
+        <playlist id="pl1" name="Mix">
+          <entry id="s1" title="One" artist="Artist" duration="100" />
+          <entry id="s2" title="Two" artist="Artist" duration="200" />
+        </playlist>
+        """
+    )
+    playlist = parse_playlist(element)
+    assert playlist.id == "pl1"
+    assert len(playlist.tracks) == 2
+    assert playlist.tracks[0].id == "s1"
+    assert playlist.tracks[1].title == "Two"

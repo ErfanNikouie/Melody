@@ -148,11 +148,13 @@ class CommandHandler:
         match: SearchMatch,
     ) -> tuple[list[QueueItem], str | None, list]:
         if match.track:
+            if not match.track.id:
+                return [], None, []
             return [QueueItem(track=match.track)], None, []
 
         if match.playlist and match.playlist.tracks:
             playlist_id = match.playlist.id
-            tracks = list(match.playlist.tracks)
+            tracks = [t for t in match.playlist.tracks if t.id]
             items = [QueueItem(track=t, source_playlist_id=playlist_id) for t in tracks]
             return items, playlist_id, tracks
 

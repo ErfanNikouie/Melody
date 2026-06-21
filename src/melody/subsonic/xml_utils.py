@@ -33,6 +33,24 @@ def _text(element: ET.Element | None, tag: str, default: str = "") -> str:
     return child.text
 
 
+def _field(element: ET.Element, name: str, default: str = "") -> str:
+    """Read a Subsonic field from an XML attribute or child element."""
+    value = element.get(name)
+    if value is not None:
+        return value
+    return _text(element, name, default)
+
+
+def _int_field(element: ET.Element, name: str, default: int = 0) -> int:
+    value = element.get(name)
+    if value is not None:
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return _int(element, name, default)
+
+
 def _int(element: ET.Element | None, tag: str, default: int = 0) -> int:
     value = _text(element, tag)
     if not value:
@@ -45,18 +63,18 @@ def _int(element: ET.Element | None, tag: str, default: int = 0) -> int:
 
 def parse_track(element: ET.Element) -> Track:
     return Track(
-        id=_text(element, "id"),
-        title=_text(element, "title"),
-        artist=_text(element, "artist"),
-        album=_text(element, "album"),
-        duration=_int(element, "duration"),
+        id=_field(element, "id"),
+        title=_field(element, "title"),
+        artist=_field(element, "artist"),
+        album=_field(element, "album"),
+        duration=_int_field(element, "duration"),
     )
 
 
 def parse_playlist_meta(element: ET.Element) -> Playlist:
     return Playlist(
-        id=_text(element, "id"),
-        name=_text(element, "name"),
+        id=_field(element, "id"),
+        name=_field(element, "name"),
         tracks=(),
     )
 
@@ -65,8 +83,8 @@ def parse_playlist(element: ET.Element) -> Playlist:
     entries = _findall(element, "entry")
     tracks = tuple(parse_track(e) for e in entries)
     return Playlist(
-        id=_text(element, "id"),
-        name=_text(element, "name"),
+        id=_field(element, "id"),
+        name=_field(element, "name"),
         tracks=tracks,
     )
 

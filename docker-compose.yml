@@ -5,9 +5,11 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    extra_hosts:
+      # Reach Murmur, Navidrome, etc. via the host's published ports
+      - "host.docker.internal:host-gateway"
     volumes:
       - melody-buffer:/tmp/melody-buffer
-    # Outbound-only: connects to external Mumble and Subsonic servers
     read_only: false
     tmpfs:
       - /tmp:size=64M
