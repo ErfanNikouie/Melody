@@ -9,7 +9,7 @@ from melody.logging import get_logger
 from melody.models import PlaybackState, QueueItem
 from melody.playback.buffer import GlobalBufferPool, RollingAudioBuffer, fill_buffer_from_stream
 from melody.playback.ffmpeg import FFmpegTranscoder
-from melody.playback.format_sniff import detect_encoded_format
+from melody.playback.format_sniff import detect_encoded_format, ffmpeg_input_format
 from melody.playback.queue import QueueManager
 from melody.protocols import ISubsonicClient
 
@@ -113,13 +113,16 @@ class PlaybackEngine:
         )
 
         buffer = RollingAudioBuffer(self._pool, start_seconds=self._start_seconds)
-        input_format: str | None = None
+        content_type = ""
+        detected_format: str | None = None
 
         async def sniffing_stream():
-            nonlocal input_format
-            async for chunk in self._subsonic.stream(track.id):
-                if input_format is None and chunk:
-                    input_format = detect_encoded_format(chunk)
+            nonlocal detected_format
+            nonlocal content_type
+            content_type, audio = await self._subsonic.open_stream(track.id)
+            async for chunk in audio:
+                if detected_format is None and chunk:
+                    detected_format = detect_encoded_format(chunk, content_type)
                 yield chunk
 
         fill_task = asyncio.create_task(fill_buffer_from_stream(buffer, sniffing_stream()))
@@ -135,15 +138,18 @@ class PlaybackEngine:
             fill_task.cancel()
             return
 
+        ffmpeg_format = ffmpeg_input_format(detected_format)
         logger.info(
-            "Buffered %s bytes for track_id=%s (detected_format=%s)",
+            "Buffered %s bytes for track_id=%s content_type=%s detected_format=%s ffmpeg_format=%s",
             buffer.total_bytes,
             track.id,
-            input_format or "auto",
+            content_type or "unknown",
+            detected_format or "auto",
+            ffmpeg_format or "auto",
         )
 
         transcoder = FFmpegTranscoder()
-        await transcoder.start(input_format=input_format)
+        await transcoder.start(input_format=ffmpeg_format)
 
         async def writer() -> None:
             try:
@@ -161,9 +167,29 @@ class PlaybackEngine:
         writer_task = asyncio.create_task(writer())
         self._state = PlaybackState.PLAYING
         frames_sent = 0
+        pcm_iter = transcoder.read_pcm_frames().__aiter__()
+        first_frame_timeout = 20.0
 
         try:
-            async for frame in transcoder.read_pcm_frames():
+            while True:
+                try:
+                    if frames_sent == 0:
+                        frame = await asyncio.wait_for(
+                            pcm_iter.__anext__(),
+                            timeout=first_frame_timeout,
+                        )
+                    else:
+                        frame = await pcm_iter.__anext__()
+                except StopAsyncIteration:
+                    break
+                except TimeoutError:
+                    logger.error(
+                        "FFmpeg produced no PCM within %ss track_id=%s stderr=%s",
+                        first_frame_timeout,
+                        track.id,
+                        transcoder.stderr_summary(),
+                    )
+                    break
                 if self._stop_event.is_set():
                     break
                 await self._pause_event.wait()
@@ -171,6 +197,8 @@ class PlaybackEngine:
                     await asyncio.sleep(0.01)
                 await self._send_pcm(frame)
                 frames_sent += 1
+                if frames_sent == 1:
+                    logger.info("PCM playback started track_id=%s", track.id)
         finally:
             writer_task.cancel()
             try:

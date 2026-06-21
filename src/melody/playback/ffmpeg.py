@@ -53,6 +53,8 @@ class FFmpegTranscoder:
             args.extend(["-f", input_format])
         args.extend(
             [
+                "-seekable",
+                "0",
                 "-i",
                 "pipe:0",
                 "-f",

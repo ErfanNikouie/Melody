@@ -115,6 +115,7 @@ class PlayerPool:
         if self._loop is None:
             raise RuntimeError("PlayerPool loop not set")
         await player.start(self._loop)
+        player.session.mark_joined()
         logger.info(
             "Player assigned user=%s channel_id=%s channel_name=%s active=%s",
             username,

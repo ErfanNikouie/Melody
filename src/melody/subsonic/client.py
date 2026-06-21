@@ -156,26 +156,38 @@ class SubsonicClient(ISubsonicClient):
         return parse_track(song_el)
 
     def stream_url(self, song_id: str) -> str:
-        return self._rest_url("stream.view", {"id": song_id, "maxBitRate": 320})
+        return self._rest_url(
+            "stream.view",
+            {"id": song_id, "maxBitRate": 320, "format": "mp3"},
+        )
 
-    async def stream(self, song_id: str) -> AsyncIterator[bytes]:
+    async def open_stream(self, song_id: str) -> tuple[str, AsyncIterator[bytes]]:
+        """Return (Content-Type, audio byte stream)."""
         url = self.stream_url(song_id)
         session = await self._get_session()
 
         try:
-            async with session.get(url) as resp:
-                if resp.status == 401:
-                    raise SubsonicAuthError("Stream authentication failed")
-                if resp.status >= 400:
-                    body = await resp.text()
-                    raise StreamError(
-                        f"Stream HTTP {resp.status} for song {song_id}: {body[:200]}"
-                    )
-                content_type = resp.headers.get("Content-Type", "")
-                if "xml" in content_type or "json" in content_type:
-                    body = await resp.text()
-                    raise StreamError(f"Stream returned error body: {body[:300]}")
-                total = 0
+            resp = await session.get(url)
+        except aiohttp.ClientError as exc:
+            raise StreamError(f"Stream network error for song {song_id}: {exc}") from exc
+
+        if resp.status == 401:
+            await resp.release()
+            raise SubsonicAuthError("Stream authentication failed")
+        if resp.status >= 400:
+            body = await resp.text()
+            await resp.release()
+            raise StreamError(f"Stream HTTP {resp.status} for song {song_id}: {body[:200]}")
+
+        content_type = resp.headers.get("Content-Type", "")
+        if "xml" in content_type or "json" in content_type:
+            body = await resp.text()
+            await resp.release()
+            raise StreamError(f"Stream returned error body: {body[:300]}")
+
+        async def body() -> AsyncIterator[bytes]:
+            total = 0
+            try:
                 async for chunk in resp.content.iter_chunked(64 * 1024):
                     if chunk:
                         total += len(chunk)
@@ -188,8 +200,15 @@ class SubsonicClient(ISubsonicClient):
                     total,
                     content_type,
                 )
-        except aiohttp.ClientError as exc:
-            raise StreamError(f"Stream network error for song {song_id}: {exc}") from exc
+            finally:
+                await resp.release()
+
+        return content_type, body()
+
+    async def stream(self, song_id: str) -> AsyncIterator[bytes]:
+        _, audio = await self.open_stream(song_id)
+        async for chunk in audio:
+            yield chunk
 
     async def close(self) -> None:
         if self._owns_session and self._session is not None:

@@ -65,10 +65,16 @@ class ChannelSession:
         await self._send_message(message)
 
     async def ensure_joined(self) -> None:
-        if not self._joined:
-            await self._join_channel()
-            self._joined = True
-            self._cancel_grace_timer()
+        if self._joined:
+            return
+        await self._join_channel()
+        self._joined = True
+        self._cancel_grace_timer()
+
+    def mark_joined(self) -> None:
+        """Player already moved into the channel on connect."""
+        self._joined = True
+        self._cancel_grace_timer()
 
     async def start_playback(self) -> None:
         await self.ensure_joined()
