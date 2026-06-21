@@ -177,7 +177,7 @@ Commands are sent as Mumble text chat messages with a configured prefix.
 
 | Option | Description |
 |--------|-------------|
-| `-t`, `--track` | Search tracks only |
+| `-t`, `--track` | Search tracks only (default when no type is specified) |
 | `-p`, `--playlist` | Search playlists only |
 | `-r`, `--repeat` | Enable repeat (track or playlist) |
 | `-s`, `--shuffle` | Shuffle upcoming queue |

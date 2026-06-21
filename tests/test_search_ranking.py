@@ -130,11 +130,13 @@ async def test_resolve_search_playlist_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_search_combined() -> None:
+async def test_resolve_search_defaults_to_track() -> None:
     client = FakeSubsonicClient(
-        tracks=[Track(id="1", title="Random", artist="X")],
+        tracks=[Track(id="1", title="Workout Mix", artist="DJ")],
         playlists=[Playlist(id="p1", name="Workout")],
     )
     match = await resolve_search(client, "workout", CommandOptions())
     assert match is not None
-    assert match.kind == "playlist"
+    assert match.kind == "track"
+    assert match.track is not None
+    assert match.track.id == "1"

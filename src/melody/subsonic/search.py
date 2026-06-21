@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 
 from melody.models import CommandOptions, Playlist, SearchMatch, Track
@@ -105,10 +104,6 @@ async def resolve_search(
 
     query = query.strip()
 
-    if options.track:
-        tracks = await client.search_tracks(query)
-        return rank_tracks(query, tracks)
-
     if options.playlist:
         playlists = await client.search_playlists(query)
         match = rank_playlists(query, playlists)
@@ -121,15 +116,6 @@ async def resolve_search(
             )
         return match
 
-    tracks_task = asyncio.create_task(client.search_tracks(query))
-    playlists_task = asyncio.create_task(client.search_playlists(query))
-    tracks, playlists = await asyncio.gather(tracks_task, playlists_task)
-
-    track_match = rank_tracks(query, tracks)
-    playlist_match = rank_playlists(query, playlists)
-
-    best = pick_best_match(query, track_match, playlist_match)
-    if best and best.kind == "playlist" and best.playlist:
-        full = await client.get_playlist(best.playlist.id)
-        return SearchMatch(kind="playlist", score=best.score, playlist=full)
-    return best
+    # Default and -t/--track: search tracks only
+    tracks = await client.search_tracks(query)
+    return rank_tracks(query, tracks)
