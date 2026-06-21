@@ -5,6 +5,8 @@ from __future__ import annotations
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from melody.models import PlayerMode
+
 
 class Settings(BaseSettings):
     """Melody configuration loaded from environment variables."""
@@ -37,6 +39,25 @@ class Settings(BaseSettings):
     mumble_username: str = Field(alias="MUMBLE_USERNAME")
     mumble_password: str = Field(default="", alias="MUMBLE_PASSWORD")
     mumble_tls: bool = Field(default=False, alias="MUMBLE_TLS")
+
+    # MelodyPlayer pool
+    player_mode: str = Field(default="pool", alias="PLAYER_MODE")
+    player_pool_size: int = Field(default=5, alias="PLAYER_POOL_SIZE")
+    player_username_prefix: str = Field(default="MelodyPlayer", alias="PLAYER_USERNAME_PREFIX")
+    player_password: str = Field(default="", alias="PLAYER_PASSWORD")
+    coordinator_accept_root_messages: bool = Field(default=True, alias="COORDINATOR_ACCEPT_ROOT_MESSAGES")
+
+    @field_validator("player_mode")
+    @classmethod
+    def normalize_player_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in ("pool", "per_channel"):
+            raise ValueError("PLAYER_MODE must be 'pool' or 'per_channel'")
+        return normalized
+
+    @property
+    def player_mode_enum(self) -> PlayerMode:
+        return PlayerMode.PER_CHANNEL if self.player_mode == "per_channel" else PlayerMode.POOL
 
     @field_validator("subsonic_url")
     @classmethod

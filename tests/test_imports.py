@@ -26,8 +26,12 @@ _LAYERED_MODULES = (
     "melody.services.search",
     "melody.commands.parser",
     "melody.commands.handler",
+    "melody.mumble.pymumble_util",
+    "melody.mumble.connection",
     "melody.mumble.channel_session",
-    "melody.mumble.client",
+    "melody.mumble.player_pool",
+    "melody.mumble.coordinator",
+    "melody.mumble.orchestrator",
     "melody.app",
 )
 
@@ -48,5 +52,5 @@ def test_no_import_cycles_walk_packages() -> None:
         importlib.import_module(module_info.name)
 
     assert "melody.commands.handler" in sys.modules
-    assert "melody.mumble.client" in sys.modules
+    assert "melody.mumble.orchestrator" in sys.modules
     assert "melody.mumble.channel_session" in sys.modules

@@ -32,6 +32,8 @@ class ISubsonicClient(Protocol):
 class IChannelSession(Protocol):
     """Per-channel bot session surface used by the command layer."""
 
+    channel_id: int
+
     @property
     def queue(self) -> QueueManager: ...
 
@@ -50,3 +52,5 @@ class IChannelSession(Protocol):
     async def skip_next(self) -> None: ...
 
     async def skip_back(self) -> None: ...
+
+    def update_human_count(self, count: int) -> None: ...

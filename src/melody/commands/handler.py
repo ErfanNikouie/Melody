@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from melody.logging import get_logger
 from melody.models import ParsedCommand, QueueItem, RepeatMode, SearchMatch
 from melody.protocols import IChannelSession
 from melody.services.search import SearchService
 
 logger = get_logger(__name__)
+
+NotifyCallback = Callable[[str], Awaitable[None]]
 
 
 class CommandHandler:
@@ -16,37 +20,48 @@ class CommandHandler:
     def __init__(self, search: SearchService) -> None:
         self._search = search
 
-    async def handle(self, command: ParsedCommand, session: IChannelSession) -> bool:
+    async def handle(
+        self,
+        command: ParsedCommand,
+        session: IChannelSession,
+        *,
+        notify: NotifyCallback | None = None,
+    ) -> bool:
         """Handle command. Returns True if session should be destroyed."""
         name = command.name
 
+        async def feedback(text: str) -> None:
+            await session.send_message(text)
+            if notify:
+                await notify(text)
+
         if name in ("play", "queue") and not command.query:
-            await session.send_message("Please provide a search query.")
+            await feedback("Please provide a search query.")
             return False
 
         if name == "play":
             await session.ensure_joined()
-            await self._handle_play(session, command)
+            await self._handle_play(session, command, feedback)
             return False
 
         if name == "queue":
             await session.ensure_joined()
-            await self._handle_queue(session, command)
+            await self._handle_queue(session, command, feedback)
             return False
 
         if name == "stop":
             await session.stop_playback(clear_all=True)
-            await session.send_message("Stopped.")
+            await feedback("Stopped.")
             return False
 
         if name == "pause":
             session.pause()
-            await session.send_message("Paused.")
+            await feedback("Paused.")
             return False
 
         if name == "resume":
             await session.resume()
-            await session.send_message("Resumed.")
+            await feedback("Resumed.")
             return False
 
         if name == "next":
@@ -62,17 +77,22 @@ class CommandHandler:
 
         return False
 
-    async def _handle_play(self, session: IChannelSession, command: ParsedCommand) -> None:
+    async def _handle_play(
+        self,
+        session: IChannelSession,
+        command: ParsedCommand,
+        feedback: NotifyCallback,
+    ) -> None:
         await session.stop_playback(clear_all=True)
 
         match = await self._search.resolve(command.query or "", command.options)
         if match is None:
-            await session.send_message("No results found.")
+            await feedback("No results found.")
             return
 
         items, playlist_id, source_tracks = self._match_to_queue_items(match)
         if not items:
-            await session.send_message("No playable tracks found.")
+            await feedback("No playable tracks found.")
             return
 
         if command.options.repeat:
@@ -88,17 +108,22 @@ class CommandHandler:
             source_tracks=source_tracks,
         )
         await session.start_playback()
-        await session.send_message(f"Playing: {match.display_name}")
+        await feedback(f"Playing: {match.display_name}")
 
-    async def _handle_queue(self, session: IChannelSession, command: ParsedCommand) -> None:
+    async def _handle_queue(
+        self,
+        session: IChannelSession,
+        command: ParsedCommand,
+        feedback: NotifyCallback,
+    ) -> None:
         match = await self._search.resolve(command.query or "", command.options)
         if match is None:
-            await session.send_message("No results found.")
+            await feedback("No results found.")
             return
 
         items, playlist_id, source_tracks = self._match_to_queue_items(match)
         if not items:
-            await session.send_message("No playable tracks found.")
+            await feedback("No playable tracks found.")
             return
 
         if command.options.repeat:
@@ -116,7 +141,7 @@ class CommandHandler:
         )
         if was_idle:
             await session.start_playback()
-        await session.send_message(f"Queued: {match.display_name}")
+        await feedback(f"Queued: {match.display_name}")
 
     def _match_to_queue_items(
         self,

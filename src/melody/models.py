@@ -19,6 +19,20 @@ class PlaybackState(str, Enum):
     PAUSED = "paused"
 
 
+class PlayerMode(str, Enum):
+    """How MelodyPlayer usernames are assigned."""
+
+    POOL = "pool"
+    PER_CHANNEL = "per_channel"
+
+
+class SearchMode(str, Enum):
+    """Search target for Subsonic queries."""
+
+    TRACK = "track"
+    PLAYLIST = "playlist"
+
+
 class SearchMode(str, Enum):
     """Search target for Subsonic queries."""
 

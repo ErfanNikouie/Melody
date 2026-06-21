@@ -8,8 +8,9 @@ A production-quality Mumble music bot that streams music from any **Subsonic-com
 - Real-time streaming via Subsonic `stream.view` — tracks are never fully downloaded
 - FFmpeg transcoding to Mumble-compatible PCM (48 kHz, 16-bit stereo)
 - Bounded rolling buffer for slow stream startup (e.g. Octo Fiesta behind Navidrome)
-- Multi-channel support — bot joins channels on demand
-- Auto-disconnect when channels are empty
+- **Multi-channel playback** — one `MelodyPlayer` connection per active channel (true simultaneous playback)
+- **Whisper commands** — whisper `Melody` from any channel; coordinator assigns a player to your channel
+- Auto-release players when channels are empty; automatic reconnect if kicked
 - Configurable command prefixes (`m/`, `melody/`, `/`, etc.)
 
 ## Architecture
@@ -18,62 +19,44 @@ Dependencies flow **one way** — outer layers depend on inner layers; nothing i
 
 ```mermaid
 flowchart TB
-  subgraph L6 [Composition Root]
-    App[MelodyApp]
+  subgraph App [MelodyApp]
+    Orch[MumbleOrchestrator]
+    Pool[PlayerPool]
+    Coord[CoordinatorBot]
+    Orch --> Coord
+    Orch --> Pool
   end
 
-  subgraph L5 [Mumble Layer]
-    MC[MumbleClient]
+  subgraph Players [MelodyPlayer connections]
+    P1[MelodyPlayer-1]
+    P2[MelodyPlayer-2]
+  end
+
+  subgraph Channel [Per channel]
     CS[ChannelSession]
-    MC --> CS
-  end
-
-  subgraph L4 [Command Layer]
-    CP[CommandParser]
-    CH[CommandHandler]
-    CP --> CH
-  end
-
-  subgraph L3 [Service Layer]
-    SS[SearchService]
-  end
-
-  subgraph L2 [Playback Layer]
-    QM[QueueManager]
     PE[PlaybackEngine]
-    BP[GlobalBufferPool]
-    FF[FFmpegTranscoder]
-    CS --> QM
     CS --> PE
-    PE --> BP
-    PE --> FF
   end
 
-  subgraph L1 [Subsonic Layer]
-    SC[SubsonicClient]
-  end
-
-  subgraph L0 [Core]
-    Models[models]
-    Protocols[protocols]
-    ISC[ISubsonicClient]
-    ICS[IChannelSession]
-    Protocols --> Models
-    ISC -.-> Protocols
-    ICS -.-> Protocols
-  end
-
-  App --> MC
-  App --> CH
-  App --> SS
-  MC --> CP
-  CH --> SS
-  CH -.->|IChannelSession| CS
-  SS --> ISC
-  PE --> ISC
-  SC -.->|implements| ISC
-  CS -.->|implements| ICS
+  User -->|whisper| Coord
+  Coord -->|assign| Pool
+  Pool --> P1
+  Pool --> P2
+  P1 --> CS
+  P2 --> CS
+  PE --> Subsonic[SubsonicClient]
 ```
+
+### Two-bot model
+
+| User | Role |
+|------|------|
+| **Melody** | Coordinator — stays in root, receives whispers (and optional root chat), routes commands |
+| **MelodyPlayer-*** | One connection per active channel — joins channel, plays audio, accepts local commands |
+
+Whisper `Melody` from any channel with `m/play …`. Melody assigns a `MelodyPlayer` to **your current channel**. Multiple channels can play simultaneously up to `PLAYER_POOL_SIZE`.
+
+Both Melody and MelodyPlayer connections use **automatic reconnect** if disconnected or kicked — no container restart needed.
 
 ### Dependency rules
 
@@ -93,7 +76,10 @@ No layer imports from Mumble or App. Commands talk to sessions through `IChannel
 
 | Component | Responsibility |
 |-----------|----------------|
-| **MumbleClient** | Connects to Mumble, routes chat commands, bridges pymumble thread to asyncio |
+| **MumbleOrchestrator** | Wires coordinator + player pool, routes whisper commands |
+| **CoordinatorBot** | `Melody` user in root; receives whispers |
+| **PlayerPool** | Assigns/releases `MelodyPlayer` connections per channel |
+| **MumbleConnection** | Reconnecting pymumble wrapper (survives kicks) |
 | **ChannelSession** | Per-channel queue, playback, grace disconnect timer |
 | **CommandParser** | Parses prefixed chat commands and options |
 | **CommandHandler** | Executes commands via `IChannelSession` and `SearchService` |
@@ -183,9 +169,14 @@ pytest
 | `SUBSONIC_PASSWORD` | Yes | — | Subsonic password |
 | `MUMBLE_HOST` | Yes | — | Mumble server hostname |
 | `MUMBLE_PORT` | No | `64738` | Mumble server port |
-| `MUMBLE_USERNAME` | Yes | — | Bot username on Mumble |
-| `MUMBLE_PASSWORD` | No | `""` | Mumble server password |
+| `MUMBLE_USERNAME` | Yes | — | Coordinator username (`Melody`) — receives whispers |
+| `MUMBLE_PASSWORD` | No | `""` | Mumble server password for coordinator |
 | `MUMBLE_TLS` | No | `false` | TLS flag (see troubleshooting) |
+| `PLAYER_MODE` | No | `pool` | `pool` (fixed slots) or `per_channel` (`MelodyPlayer-{channel}`) |
+| `PLAYER_POOL_SIZE` | No | `5` | Max simultaneous channels when `PLAYER_MODE=pool` |
+| `PLAYER_USERNAME_PREFIX` | No | `MelodyPlayer` | Prefix for player usernames |
+| `PLAYER_PASSWORD` | No | `""` | Password for player accounts (empty if server allows) |
+| `COORDINATOR_ACCEPT_ROOT_MESSAGES` | No | `true` | Also accept commands in root channel chat |
 | `COMMAND_PREFIXES` | No | `m/,melody/,/` | Comma-separated command prefixes |
 | `DISCONNECT_GRACE_PERIOD` | No | `300` | Seconds before leaving empty channels |
 | `AUDIO_BUFFER_MAX_MB` | No | `256` | Max buffer size across all streams |
@@ -194,7 +185,9 @@ pytest
 
 ## Commands
 
-Commands are sent as Mumble text chat messages with a configured prefix.
+**Whisper `Melody`** from any channel (recommended), or type in root if `COORDINATOR_ACCEPT_ROOT_MESSAGES=true`. You can also whisper the channel's `MelodyPlayer` directly once it is active.
+
+Commands use a configured prefix:
 
 | Command | Description |
 |---------|-------------|
@@ -277,7 +270,11 @@ pymumble connects over plain TCP by default. If your server requires TLS, you ma
 
 ### Bot leaves channel unexpectedly
 
-When no human users remain in a channel, the bot starts a grace timer (`DISCONNECT_GRACE_PERIOD`). After it expires, playback stops and the bot leaves. Join the channel again and send a command to bring it back.
+When no human users remain in a channel, the assigned `MelodyPlayer` starts a grace timer (`DISCONNECT_GRACE_PERIOD`), then disconnects and returns its slot to the pool. Whisper `Melody` again to start playback.
+
+### After a kick or disconnect
+
+Melody and MelodyPlayer connections reconnect automatically (`reconnect=True` in pymumble). If kicked, re-register the bot user on the server if required — no container restart needed.
 
 ## License
 

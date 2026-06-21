@@ -9,7 +9,8 @@ from melody.commands.handler import CommandHandler
 from melody.commands.parser import CommandParser
 from melody.config import Settings
 from melody.logging import get_logger, setup_logging
-from melody.mumble.client import MumbleClient
+from melody.mumble.orchestrator import MumbleOrchestrator
+from melody.mumble.player_pool import PlayerPool
 from melody.playback.buffer import GlobalBufferPool
 from melody.services.search import SearchService
 from melody.subsonic.client import SubsonicClient
@@ -31,47 +32,36 @@ class MelodyApp:
         self._parser = CommandParser(settings.prefixes)
         self._search = SearchService(self._subsonic)
         self._handler = CommandHandler(self._search)
-        self._mumble = MumbleClient(
+        self._pool = PlayerPool(settings, self._subsonic, self._buffer_pool)
+        self._orchestrator = MumbleOrchestrator(
             settings,
-            self._subsonic,
             self._parser,
             self._handler,
-            self._buffer_pool,
+            self._pool,
         )
         self._shutdown_event = asyncio.Event()
-        self._message_task: asyncio.Task[None] | None = None
 
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
         self._install_signal_handlers(loop)
 
-        self._mumble.set_on_all_sessions_closed(self._on_all_sessions_closed)
-
-        await self._mumble.connect(loop)
-        if not self._mumble.is_connected:
-            logger.error("Failed to connect to Mumble server")
+        try:
+            await self._orchestrator.start(loop)
+        except RuntimeError:
+            logger.error("Failed to start Melody coordinator")
             await self.shutdown()
             return
 
-        logger.info("Connected to Mumble as %s", self._settings.mumble_username)
-        self._message_task = asyncio.create_task(self._mumble.run_message_loop())
-
+        logger.info(
+            "Melody running (coordinator=%s, player_mode=%s)",
+            self._settings.mumble_username,
+            self._settings.player_mode,
+        )
         await self._shutdown_event.wait()
         await self.shutdown()
 
-    async def _on_all_sessions_closed(self) -> None:
-        logger.info("No active channel sessions; disconnecting from Mumble")
-        await self._mumble.disconnect()
-        self._shutdown_event.set()
-
     async def shutdown(self) -> None:
-        if self._message_task and not self._message_task.done():
-            self._message_task.cancel()
-            try:
-                await self._message_task
-            except asyncio.CancelledError:
-                pass
-        await self._mumble.disconnect()
+        await self._orchestrator.stop()
         await self._subsonic.close()
         logger.info("Melody shut down")
 
