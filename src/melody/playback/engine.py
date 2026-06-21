@@ -11,6 +11,7 @@ from melody.playback.buffer import GlobalBufferPool
 from melody.playback.ffmpeg import FRAME_DURATION_SEC, FFmpegTranscoder
 from melody.playback.pcm_pacer import PcmPacer
 from melody.playback.queue import QueueManager
+from melody.playback.volume import DEFAULT_VOLUME_PERCENT, apply_volume_pcm, clamp_volume_percent
 from melody.protocols import ISubsonicClient
 
 logger = get_logger(__name__)
@@ -46,6 +47,17 @@ class PlaybackEngine:
         self._stop_event = asyncio.Event()
         self._pause_event = asyncio.Event()
         self._pause_event.set()
+        self._volume = DEFAULT_VOLUME_PERCENT / 100.0
+
+    @property
+    def volume_percent(self) -> int:
+        return round(self._volume * 100)
+
+    def set_volume_percent(self, percent: int) -> None:
+        self._volume = clamp_volume_percent(percent) / 100.0
+
+    def _scale_pcm(self, pcm: bytes) -> bytes:
+        return apply_volume_pcm(pcm, self._volume)
 
     @property
     def state(self) -> PlaybackState:
@@ -152,10 +164,11 @@ class PlaybackEngine:
             if not pending_batch:
                 return
             first_flush = frames_sent == 0
-            if self._send_pcm_batch and len(pending_batch) > 1:
-                await self._send_pcm_batch(pending_batch)
+            scaled = [self._scale_pcm(chunk) for chunk in pending_batch]
+            if self._send_pcm_batch and len(scaled) > 1:
+                await self._send_pcm_batch(scaled)
             else:
-                for chunk in pending_batch:
+                for chunk in scaled:
                     await self._send_pcm(chunk)
             frames_sent += len(pending_batch)
             if first_flush:

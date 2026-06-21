@@ -121,6 +121,13 @@ class ChannelSession:
         else:
             await self.send_message("No previous track.")
 
+    @property
+    def volume_percent(self) -> int:
+        return self.engine.volume_percent
+
+    def set_volume_percent(self, percent: int) -> None:
+        self.engine.set_volume_percent(percent)
+
     def update_human_count(self, count: int) -> None:
         self._human_count = count
         if count > 0:

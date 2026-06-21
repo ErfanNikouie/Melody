@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from melody.logging import get_logger
 from melody.models import ParsedCommand, QueueItem, RepeatMode, SearchMatch
 from melody.protocols import IChannelSession
+from melody.playback.volume import parse_volume_command, resolve_volume_percent
 from melody.services.search import SearchService
 
 logger = get_logger(__name__)
@@ -73,10 +74,34 @@ class CommandHandler:
             await session.skip_back()
             return False
 
+        if name == "volume":
+            await self._handle_volume(session, command, feedback)
+            return False
+
         if name in ("quit", "exit"):
             return True
 
         return False
+
+    async def _handle_volume(
+        self,
+        session: IChannelSession,
+        command: ParsedCommand,
+        feedback: NotifyCallback,
+    ) -> None:
+        volume_cmd = parse_volume_command(command.query)
+        if volume_cmd is None:
+            await feedback("Usage: volume [0-100 | up | down | +N | -N]")
+            return
+
+        current = session.volume_percent
+        if volume_cmd.action == "show":
+            await feedback(f"Volume: {current}%")
+            return
+
+        new_level = resolve_volume_percent(current, volume_cmd)
+        session.set_volume_percent(new_level)
+        await feedback(f"Volume: {new_level}%")
 
     async def _handle_play(
         self,

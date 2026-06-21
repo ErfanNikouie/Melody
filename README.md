@@ -198,6 +198,7 @@ Commands use a configured prefix:
 | `resume` | Resume playback |
 | `next` | Skip to next track |
 | `back` | Return to previous track |
+| `volume [level]` | Show or set playback volume (0–100) |
 | `quit` / `exit` | Stop, leave channel, destroy session |
 
 ### Options
@@ -211,6 +212,17 @@ Commands use a configured prefix:
 
 Options may appear before or after the query.
 
+### Volume
+
+Volume applies to the channel's player immediately and persists for that session (default **100%**).
+
+| Form | Description |
+|------|-------------|
+| `volume` | Show current volume |
+| `volume 75` or `volume 75%` | Set absolute level (0–100) |
+| `volume up` / `volume down` | Increase or decrease by 10% |
+| `volume +15` / `volume -15` | Adjust relative to current level |
+
 ### Examples
 
 ```
@@ -221,6 +233,10 @@ m/queue -r -s rock classics
 /stop
 m/next
 melody/back
+m/volume
+m/volume 50
+melody/volume up
+/volume -10
 /quit
 ```
 

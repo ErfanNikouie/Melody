@@ -5,7 +5,18 @@ from __future__ import annotations
 from melody.models import CommandOptions, ParsedCommand
 
 KNOWN_COMMANDS = frozenset(
-    {"play", "queue", "stop", "pause", "resume", "next", "back", "quit", "exit"}
+    {
+        "play",
+        "queue",
+        "stop",
+        "pause",
+        "resume",
+        "next",
+        "back",
+        "volume",
+        "quit",
+        "exit",
+    }
 )
 
 OPTION_MAP: dict[str, str] = {

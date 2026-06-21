@@ -76,3 +76,15 @@ def test_longest_prefix_wins() -> None:
 def test_quit_and_exit(parser: CommandParser) -> None:
     assert parser.parse("m/quit") is not None
     assert parser.parse("/exit") is not None
+
+
+def test_volume_command(parser: CommandParser) -> None:
+    cmd = parser.parse("m/volume 75")
+    assert cmd is not None
+    assert cmd.name == "volume"
+    assert cmd.query == "75"
+
+    show = parser.parse("m/volume")
+    assert show is not None
+    assert show.name == "volume"
+    assert show.query is None
