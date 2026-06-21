@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from melody.models import CommandOptions, Playlist, Track
+from melody.models import Playlist, SearchMode, Track
 from melody.subsonic.search import (
     pick_best_match,
     rank_playlists,
@@ -107,22 +107,22 @@ def test_pick_best_higher_score_wins() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_search_track_only() -> None:
+async def test_resolve_search_track_mode() -> None:
     client = FakeSubsonicClient(
         tracks=[Track(id="1", title="Song", artist="Artist")],
     )
-    match = await resolve_search(client, "song", CommandOptions(track=True))
+    match = await resolve_search(client, "song", SearchMode.TRACK)
     assert match is not None
     assert match.kind == "track"
 
 
 @pytest.mark.asyncio
-async def test_resolve_search_playlist_only() -> None:
+async def test_resolve_search_playlist_mode() -> None:
     tracks = (Track(id="1", title="A", artist="B"),)
     client = FakeSubsonicClient(
         playlists=[Playlist(id="p1", name="Workout", tracks=tracks)],
     )
-    match = await resolve_search(client, "workout", CommandOptions(playlist=True))
+    match = await resolve_search(client, "workout", SearchMode.PLAYLIST)
     assert match is not None
     assert match.kind == "playlist"
     assert match.playlist is not None
@@ -135,7 +135,7 @@ async def test_resolve_search_defaults_to_track() -> None:
         tracks=[Track(id="1", title="Workout Mix", artist="DJ")],
         playlists=[Playlist(id="p1", name="Workout")],
     )
-    match = await resolve_search(client, "workout", CommandOptions())
+    match = await resolve_search(client, "workout", SearchMode.TRACK)
     assert match is not None
     assert match.kind == "track"
     assert match.track is not None

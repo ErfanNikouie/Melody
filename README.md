@@ -14,47 +14,80 @@ A production-quality Mumble music bot that streams music from any **Subsonic-com
 
 ## Architecture
 
+Dependencies flow **one way** — outer layers depend on inner layers; nothing imports upward.
+
 ```mermaid
 flowchart TB
-    subgraph mumbleLayer [Mumble Layer]
-        MC[MumbleClient]
-        CS1[ChannelSession]
-        CS2[ChannelSession]
-        MC --> CS1
-        MC --> CS2
-    end
+  subgraph L6 [Composition Root]
+    App[MelodyApp]
+  end
 
-    subgraph commandLayer [Command Layer]
-        CP[CommandParser]
-        CH[CommandHandler]
-    end
+  subgraph L5 [Mumble Layer]
+    MC[MumbleClient]
+    CS[ChannelSession]
+    MC --> CS
+  end
 
-    subgraph playbackLayer [Playback Layer]
-        QM[QueueManager]
-        PE[PlaybackEngine]
-        BP[GlobalBufferPool]
-        FF[FFmpegTranscoder]
-    end
-
-    subgraph subsonicLayer [Subsonic Layer]
-        ISC[ISubsonicClient]
-        SC[SubsonicClient]
-        SR[SearchRanker]
-        SC -.-> ISC
-    end
-
-    MC -->|text messages| CP
+  subgraph L4 [Command Layer]
+    CP[CommandParser]
+    CH[CommandHandler]
     CP --> CH
-    CH --> CS1
-    CH --> CS2
-    CS1 --> QM
-    CS1 --> PE
+  end
+
+  subgraph L3 [Service Layer]
+    SS[SearchService]
+  end
+
+  subgraph L2 [Playback Layer]
+    QM[QueueManager]
+    PE[PlaybackEngine]
+    BP[GlobalBufferPool]
+    FF[FFmpegTranscoder]
+    CS --> QM
+    CS --> PE
     PE --> BP
     PE --> FF
-    PE --> ISC
-    CH --> SR
-    SR --> ISC
+  end
+
+  subgraph L1 [Subsonic Layer]
+    SC[SubsonicClient]
+  end
+
+  subgraph L0 [Core]
+    Models[models]
+    Protocols[protocols]
+    ISC[ISubsonicClient]
+    ICS[IChannelSession]
+    Protocols --> Models
+    ISC -.-> Protocols
+    ICS -.-> Protocols
+  end
+
+  App --> MC
+  App --> CH
+  App --> SS
+  MC --> CP
+  CH --> SS
+  CH -.->|IChannelSession| CS
+  SS --> ISC
+  PE --> ISC
+  SC -.->|implements| ISC
+  CS -.->|implements| ICS
 ```
+
+### Dependency rules
+
+| Layer | May import from |
+|-------|-----------------|
+| **Core** (`models`, `protocols`, `config`, `logging`) | stdlib only |
+| **Subsonic** | Core |
+| **Playback** | Core, Subsonic protocols |
+| **Services** | Core, Subsonic |
+| **Commands** | Core, Services, Protocols |
+| **Mumble** | Core, Playback, Commands, Subsonic protocols |
+| **App** | All layers (composition root) |
+
+No layer imports from Mumble or App. Commands talk to sessions through `IChannelSession`, not concrete `ChannelSession`.
 
 ### Components
 
@@ -63,10 +96,11 @@ flowchart TB
 | **MumbleClient** | Connects to Mumble, routes chat commands, bridges pymumble thread to asyncio |
 | **ChannelSession** | Per-channel queue, playback, grace disconnect timer |
 | **CommandParser** | Parses prefixed chat commands and options |
-| **CommandHandler** | Executes commands against channel sessions |
+| **CommandHandler** | Executes commands via `IChannelSession` and `SearchService` |
+| **SearchService** | Resolves queries to ranked Subsonic matches |
 | **QueueManager** | History, current track, upcoming queue, repeat/shuffle |
 | **PlaybackEngine** | Streams from Subsonic, buffers, transcodes via FFmpeg, sends PCM |
-| **ISubsonicClient** | Backend-agnostic Subsonic API interface |
+| **ISubsonicClient** | Backend-agnostic Subsonic API interface (in `protocols`) |
 | **SubsonicClient** | aiohttp implementation for any Open Subsonic server |
 
 ### Audio pipeline

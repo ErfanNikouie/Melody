@@ -6,9 +6,10 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from melody.logging import get_logger
+from melody.playback.buffer import GlobalBufferPool
 from melody.playback.engine import PlaybackEngine
 from melody.playback.queue import QueueManager
-from melody.subsonic.interface import ISubsonicClient
+from melody.protocols import ISubsonicClient
 
 logger = get_logger(__name__)
 
@@ -28,7 +29,7 @@ class ChannelSession:
         channel_id: int,
         channel_name: str,
         subsonic: ISubsonicClient,
-        buffer_pool: object,
+        buffer_pool: GlobalBufferPool,
         *,
         start_seconds: float,
         grace_period: float,

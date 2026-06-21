@@ -20,7 +20,7 @@ from melody.subsonic.errors import (
     SubsonicError,
     TrackNotFoundError,
 )
-from melody.subsonic.interface import ISubsonicClient
+from melody.protocols import ISubsonicClient
 from melody.subsonic.xml_utils import (
     _findall,
     check_response_status,

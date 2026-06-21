@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from melody.logging import get_logger
 from melody.models import ParsedCommand, QueueItem, RepeatMode, SearchMatch
-from melody.subsonic.interface import ISubsonicClient
-from melody.subsonic.search import resolve_search
+from melody.protocols import IChannelSession
+from melody.services.search import SearchService
 
 logger = get_logger(__name__)
 
@@ -13,18 +13,11 @@ logger = get_logger(__name__)
 class CommandHandler:
     """Executes bot commands for a channel session."""
 
-    def __init__(self, subsonic: ISubsonicClient) -> None:
-        self._subsonic = subsonic
+    def __init__(self, search: SearchService) -> None:
+        self._search = search
 
-    async def handle(
-        self,
-        command: ParsedCommand,
-        session: object,
-    ) -> bool:
+    async def handle(self, command: ParsedCommand, session: IChannelSession) -> bool:
         """Handle command. Returns True if session should be destroyed."""
-        from melody.mumble.channel_session import ChannelSession
-
-        assert isinstance(session, ChannelSession)
         name = command.name
 
         if name in ("play", "queue") and not command.query:
@@ -69,13 +62,10 @@ class CommandHandler:
 
         return False
 
-    async def _handle_play(self, session: object, command: ParsedCommand) -> None:
-        from melody.mumble.channel_session import ChannelSession
-
-        assert isinstance(session, ChannelSession)
+    async def _handle_play(self, session: IChannelSession, command: ParsedCommand) -> None:
         await session.stop_playback(clear_all=True)
 
-        match = await resolve_search(self._subsonic, command.query or "", command.options)
+        match = await self._search.resolve(command.query or "", command.options)
         if match is None:
             await session.send_message("No results found.")
             return
@@ -100,11 +90,8 @@ class CommandHandler:
         await session.start_playback()
         await session.send_message(f"Playing: {match.display_name}")
 
-    async def _handle_queue(self, session: object, command: ParsedCommand) -> None:
-        from melody.mumble.channel_session import ChannelSession
-
-        assert isinstance(session, ChannelSession)
-        match = await resolve_search(self._subsonic, command.query or "", command.options)
+    async def _handle_queue(self, session: IChannelSession, command: ParsedCommand) -> None:
+        match = await self._search.resolve(command.query or "", command.options)
         if match is None:
             await session.send_message("No results found.")
             return

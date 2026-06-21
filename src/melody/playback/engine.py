@@ -7,10 +7,10 @@ from collections.abc import Awaitable, Callable
 
 from melody.logging import get_logger
 from melody.models import PlaybackState, QueueItem
-from melody.playback.buffer import RollingAudioBuffer, fill_buffer_from_stream
+from melody.playback.buffer import GlobalBufferPool, RollingAudioBuffer, fill_buffer_from_stream
 from melody.playback.ffmpeg import FFmpegTranscoder
 from melody.playback.queue import QueueManager
-from melody.subsonic.interface import ISubsonicClient
+from melody.protocols import ISubsonicClient
 
 logger = get_logger(__name__)
 
@@ -25,17 +25,15 @@ class PlaybackEngine:
         self,
         subsonic: ISubsonicClient,
         queue: QueueManager,
-        buffer_pool: object,
+        buffer_pool: GlobalBufferPool,
         *,
         start_seconds: float,
         send_pcm: SendPcmCallback,
         get_buffer_size: GetBufferSizeCallback,
     ) -> None:
-        from melody.playback.buffer import GlobalBufferPool
-
         self._subsonic = subsonic
         self._queue = queue
-        self._pool: GlobalBufferPool = buffer_pool  # type: ignore[assignment]
+        self._pool = buffer_pool
         self._start_seconds = start_seconds
         self._send_pcm = send_pcm
         self._get_buffer_size = get_buffer_size

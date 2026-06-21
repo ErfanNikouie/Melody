@@ -19,6 +19,13 @@ class PlaybackState(str, Enum):
     PAUSED = "paused"
 
 
+class SearchMode(str, Enum):
+    """Search target for Subsonic queries."""
+
+    TRACK = "track"
+    PLAYLIST = "playlist"
+
+
 @dataclass(frozen=True, slots=True)
 class Track:
     id: str

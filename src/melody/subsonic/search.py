@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 
-from melody.models import CommandOptions, Playlist, SearchMatch, Track
-from melody.subsonic.interface import ISubsonicClient
+from melody.models import Playlist, SearchMatch, SearchMode, Track
+from melody.protocols import ISubsonicClient
 
 _TOKEN_RE = re.compile(r"\w+")
 
@@ -96,7 +96,7 @@ def pick_best_match(
 async def resolve_search(
     client: ISubsonicClient,
     query: str,
-    options: CommandOptions,
+    mode: SearchMode,
 ) -> SearchMatch | None:
     """Search Subsonic and return the best ranked match."""
     if not query or not query.strip():
@@ -104,7 +104,7 @@ async def resolve_search(
 
     query = query.strip()
 
-    if options.playlist:
+    if mode == SearchMode.PLAYLIST:
         playlists = await client.search_playlists(query)
         match = rank_playlists(query, playlists)
         if match and match.playlist:
@@ -116,6 +116,5 @@ async def resolve_search(
             )
         return match
 
-    # Default and -t/--track: search tracks only
     tracks = await client.search_tracks(query)
     return rank_tracks(query, tracks)

@@ -6,10 +6,7 @@ import asyncio
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-
-import pymumble_py3 as pymumble
-from pymumble_py3.constants import PYMUMBLE_CLBK_TEXTMESSAGERECEIVED
-from pymumble_py3.errors import DenyError
+from typing import TYPE_CHECKING, Any
 
 from melody.commands.handler import CommandHandler
 from melody.commands.parser import CommandParser
@@ -17,9 +14,21 @@ from melody.config import Settings
 from melody.logging import get_logger
 from melody.mumble.channel_session import ChannelSession
 from melody.playback.buffer import GlobalBufferPool
-from melody.subsonic.interface import ISubsonicClient
+from melody.protocols import ISubsonicClient
+
+if TYPE_CHECKING:
+    import pymumble_py3 as pymumble
 
 logger = get_logger(__name__)
+
+
+def _load_pymumble() -> tuple[Any, Any, Any]:
+    """Import pymumble at runtime (requires libopus on the host)."""
+    import pymumble_py3 as pymumble
+    from pymumble_py3.constants import PYMUMBLE_CLBK_TEXTMESSAGERECEIVED
+    from pymumble_py3.errors import DenyError
+
+    return pymumble, PYMUMBLE_CLBK_TEXTMESSAGERECEIVED, DenyError
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +56,7 @@ class MumbleClient:
         self._handler = handler
         self._buffer_pool = buffer_pool
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._mumble: pymumble.Mumble | None = None
+        self._mumble: Any = None
         self._thread: threading.Thread | None = None
         self._connected = asyncio.Event()
         self._text_queue: asyncio.Queue[TextMessageEvent] = asyncio.Queue()
@@ -78,15 +87,23 @@ class MumbleClient:
             )
 
         try:
+            pymumble, text_cb, deny_error = _load_pymumble()
+        except Exception:
+            logger.exception("Failed to load pymumble (is libopus installed?)")
+            if self._loop:
+                self._loop.call_soon_threadsafe(self._connected.set)
+            return
+
+        try:
             self._mumble = pymumble.Mumble(host, user, port=port, password=password, stereo=True)
-            self._mumble.set_callback(PYMUMBLE_CLBK_TEXTMESSAGERECEIVED, self._on_text_message)
+            self._mumble.set_callback(text_cb, self._on_text_message)
             self._mumble.start()
             self._mumble.is_ready()
             self._bot_session_id = self._mumble.user_session
             if self._loop:
                 self._loop.call_soon_threadsafe(self._connected.set)
             self._mumble.loop()
-        except DenyError as exc:
+        except deny_error as exc:
             logger.error("Mumble connection denied: %s", exc)
             if self._loop:
                 self._loop.call_soon_threadsafe(self._connected.set)
@@ -97,7 +114,7 @@ class MumbleClient:
 
     def _on_text_message(
         self,
-        _mumble: pymumble.Mumble,
+        _mumble: Any,
         sender: int,
         message: str,
         channel: int,

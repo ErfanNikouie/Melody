@@ -11,6 +11,7 @@ from melody.config import Settings
 from melody.logging import get_logger, setup_logging
 from melody.mumble.client import MumbleClient
 from melody.playback.buffer import GlobalBufferPool
+from melody.services.search import SearchService
 from melody.subsonic.client import SubsonicClient
 
 logger = get_logger(__name__)
@@ -28,7 +29,8 @@ class MelodyApp:
         )
         self._buffer_pool = GlobalBufferPool(settings.audio_buffer_max_bytes)
         self._parser = CommandParser(settings.prefixes)
-        self._handler = CommandHandler(self._subsonic)
+        self._search = SearchService(self._subsonic)
+        self._handler = CommandHandler(self._search)
         self._mumble = MumbleClient(
             settings,
             self._subsonic,
@@ -78,8 +80,8 @@ class MelodyApp:
             try:
                 loop.add_signal_handler(sig, lambda: self._shutdown_event.set())
             except NotImplementedError:
-                # Windows does not support add_signal_handler for all signals
                 signal.signal(sig, lambda _s, _f: self._shutdown_event.set())
+
 
 def create_app(settings: Settings | None = None) -> MelodyApp:
     setup_logging((settings or Settings()).log_level)  # type: ignore[call-arg]
