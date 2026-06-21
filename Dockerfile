@@ -12,7 +12,7 @@ COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 
 RUN pip install --no-cache-dir . \
-    && python -c "import melody"
+    && python -c "import melody; from pymumble_py3.errors import ConnectionRejectedError"
 
 RUN mkdir -p /tmp/melody-buffer && chown melody:melody /tmp/melody-buffer
 

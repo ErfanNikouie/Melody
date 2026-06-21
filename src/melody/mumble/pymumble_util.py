@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,23 +23,44 @@ class ParsedTextMessage:
     target_channel_id: int | None
 
 
-def load_pymumble() -> tuple[Any, Any, Any, Any, type[Exception]]:
-    """Return (pymumble module, text callback id, connected id, disconnected id, reject error)."""
+def load_pymumble() -> tuple[Any, type[Exception]]:
+    """Return (pymumble module, connection-rejected exception class)."""
     import pymumble_py3 as pymumble
+    from pymumble_py3.errors import ConnectionRejectedError
+
+    return pymumble, ConnectionRejectedError
+
+
+def bind_callbacks(
+    mumble: Any,
+    *,
+    on_text: Callable[[Any], None],
+    on_connected: Callable[[], None],
+    on_disconnected: Callable[[], None],
+) -> None:
+    """Register pymumble event handlers using the library's public callback API."""
     from pymumble_py3.constants import (
         PYMUMBLE_CLBK_CONNECTED,
         PYMUMBLE_CLBK_DISCONNECTED,
         PYMUMBLE_CLBK_TEXTMESSAGERECEIVED,
     )
-    from pymumble_py3.errors import ConnectionRejectedError
 
-    return (
-        pymumble,
-        PYMUMBLE_CLBK_TEXTMESSAGERECEIVED,
-        PYMUMBLE_CLBK_CONNECTED,
-        PYMUMBLE_CLBK_DISCONNECTED,
-        ConnectionRejectedError,
-    )
+    mumble.callbacks.set_callback(PYMUMBLE_CLBK_TEXTMESSAGERECEIVED, on_text)
+    mumble.callbacks.set_callback(PYMUMBLE_CLBK_CONNECTED, on_connected)
+    mumble.callbacks.set_callback(PYMUMBLE_CLBK_DISCONNECTED, on_disconnected)
+
+
+def get_session_id(mumble: Any) -> int | None:
+    """Return this bot's Mumble session id, if known."""
+    session = mumble.users.myself_session
+    return int(session) if session is not None else None
+
+
+def is_connection_failed(mumble: Any) -> bool:
+    """True when pymumble reports a failed connection state."""
+    from pymumble_py3.constants import PYMUMBLE_CONN_STATE_FAILED
+
+    return mumble.connected >= PYMUMBLE_CONN_STATE_FAILED
 
 
 def parse_text_message(mumble: Any, mess: Any) -> ParsedTextMessage | None:

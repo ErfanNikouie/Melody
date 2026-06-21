@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 from melody.logging import get_logger
-from melody.mumble.pymumble_util import ParsedTextMessage, load_pymumble, parse_text_message
+from melody.mumble.pymumble_util import (
+    ParsedTextMessage,
+    bind_callbacks,
+    get_session_id,
+    is_connection_failed,
+    load_pymumble,
+    parse_text_message,
+)
 
 logger = get_logger(__name__)
 
@@ -47,7 +54,6 @@ class MumbleConnection:
         self._thread: threading.Thread | None = None
         self._ready = asyncio.Event()
         self._bot_session_id: int | None = None
-        self._deny_error: Any = None
         self._post_connect_channel: int | None = None
 
     @property
@@ -84,8 +90,7 @@ class MumbleConnection:
 
     def _run(self) -> None:
         try:
-            pymumble, text_cb, connected_cb, disconnected_cb, deny_error = load_pymumble()
-            self._deny_error = deny_error
+            pymumble, connection_rejected_error = load_pymumble()
         except Exception:
             logger.exception("Failed to load pymumble for user=%s", self._username)
             if self._loop:
@@ -101,16 +106,24 @@ class MumbleConnection:
                 reconnect=self._reconnect,
                 stereo=self._stereo,
             )
-            self._mumble.set_callback(text_cb, self._handle_text)
-            self._mumble.set_callback(connected_cb, self._handle_connected)
-            self._mumble.set_callback(disconnected_cb, self._handle_disconnected)
+            bind_callbacks(
+                self._mumble,
+                on_text=self._handle_text,
+                on_connected=self._handle_connected,
+                on_disconnected=self._handle_disconnected,
+            )
             self._mumble.start()
             self._mumble.is_ready()
-            self._bot_session_id = self._mumble.user_session
+            if is_connection_failed(self._mumble):
+                logger.error("Mumble connection failed user=%s", self._username)
+                if self._loop:
+                    self._loop.call_soon_threadsafe(self._ready.set)
+                return
+            self._bot_session_id = get_session_id(self._mumble)
             if self._loop:
                 self._loop.call_soon_threadsafe(self._ready.set)
-            self._mumble.loop()
-        except deny_error as exc:
+            self._mumble.join()
+        except connection_rejected_error as exc:
             logger.error("Mumble connection denied user=%s: %s", self._username, exc)
             if self._loop:
                 self._loop.call_soon_threadsafe(self._ready.set)
@@ -119,20 +132,21 @@ class MumbleConnection:
             if self._loop:
                 self._loop.call_soon_threadsafe(self._ready.set)
 
-    def _handle_connected(self, _mumble: Any) -> None:
-        self._bot_session_id = _mumble.user_session
+    def _handle_connected(self) -> None:
+        if self._mumble is not None:
+            self._bot_session_id = get_session_id(self._mumble)
         logger.info("Mumble connected user=%s session=%s", self._username, self._bot_session_id)
         if self._post_connect_channel is not None:
             self._join_channel_sync(self._post_connect_channel)
         if self._on_connected_cb:
             self._on_connected_cb()
 
-    def _handle_disconnected(self, _mumble: Any) -> None:
+    def _handle_disconnected(self) -> None:
         logger.warning("Mumble disconnected user=%s (will reconnect=%s)", self._username, self._reconnect)
         if self._on_disconnected_cb:
             self._on_disconnected_cb()
 
-    def _handle_text(self, _mumble: Any, mess: Any) -> None:
+    def _handle_text(self, mess: Any) -> None:
         if self._loop is None or self._mumble is None or self._on_text is None:
             return
         parsed = parse_text_message(self._mumble, mess)
