@@ -75,10 +75,13 @@ class MumbleOrchestrator:
             return
 
         self._ensure_player_listener(player)
+        notify: NotifyCallback | None = None
+        if message.is_private:
+            notify = lambda text, sid=message.sender_session: self._coordinator.whisper(sid, text)
         await self._dispatch_command(
             command,
             player,
-            notify=lambda text: self._coordinator.whisper(message.sender_session, text),
+            notify=notify,
         )
 
     def _ensure_player_listener(self, player: PlayerBot) -> None:
@@ -101,6 +104,9 @@ class MumbleOrchestrator:
     ) -> None:
         while channel_id in self._player_queues:
             message = await queue.get()
+            if not message.is_private:
+                # Channel commands to Melody are handled by the coordinator.
+                continue
             command = self._parser.parse(message.message)
             if command is None:
                 continue

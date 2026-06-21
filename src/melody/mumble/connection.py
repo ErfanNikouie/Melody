@@ -156,12 +156,27 @@ class MumbleConnection:
         if self._mumble is not None:
             self._bot_session_id = get_session_id(self._mumble)
         logger.info("Mumble connected user=%s session=%s", self._username, self._bot_session_id)
+        self._ensure_voice_ready()
         if self._post_connect_channel is not None:
             self._join_channel_sync(self._post_connect_channel)
         if self._on_connected_cb:
             self._on_connected_cb()
         if self._loop and not self._ready.is_set():
             self._loop.call_soon_threadsafe(self._ready.set)
+
+    def _ensure_voice_ready(self) -> None:
+        """Player bots must not be self-muted/deafened before sending audio."""
+        if not self._stereo or self._mumble is None:
+            return
+        try:
+            myself = self._mumble.users.myself
+            if myself is None:
+                return
+            myself.unmute()
+            myself.undeafen()
+            logger.debug("Voice unmuted user=%s", self._username)
+        except Exception:
+            logger.exception("Failed to unmute user=%s", self._username)
 
     def _handle_disconnected(self) -> None:
         logger.warning("Mumble disconnected user=%s (will reconnect=%s)", self._username, self._reconnect)

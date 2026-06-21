@@ -36,29 +36,38 @@ class FFmpegTranscoder:
     def pcm_frame_bytes(self) -> int:
         return PCM_FRAME_BYTES
 
-    async def start(self) -> None:
+    async def start(self, *, input_format: str | None = None) -> None:
         ffmpeg = find_ffmpeg()
-        self._process = await asyncio.create_subprocess_exec(
+        args = [
             ffmpeg,
             "-hide_banner",
             "-loglevel",
             "warning",
             "-nostdin",
             "-probesize",
-            "32768",
+            "1M",
             "-analyzeduration",
-            "0",
-            "-i",
-            "pipe:0",
-            "-f",
-            "s16le",
-            "-acodec",
-            "pcm_s16le",
-            "-ar",
-            str(SAMPLE_RATE),
-            "-ac",
-            str(CHANNELS),
-            "pipe:1",
+            "5M",
+        ]
+        if input_format:
+            args.extend(["-f", input_format])
+        args.extend(
+            [
+                "-i",
+                "pipe:0",
+                "-f",
+                "s16le",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                str(SAMPLE_RATE),
+                "-ac",
+                str(CHANNELS),
+                "pipe:1",
+            ]
+        )
+        self._process = await asyncio.create_subprocess_exec(
+            *args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

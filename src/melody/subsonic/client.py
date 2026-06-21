@@ -156,7 +156,7 @@ class SubsonicClient(ISubsonicClient):
         return parse_track(song_el)
 
     def stream_url(self, song_id: str) -> str:
-        return self._rest_url("stream.view", {"id": song_id})
+        return self._rest_url("stream.view", {"id": song_id, "maxBitRate": 320})
 
     async def stream(self, song_id: str) -> AsyncIterator[bytes]:
         url = self.stream_url(song_id)
@@ -167,14 +167,27 @@ class SubsonicClient(ISubsonicClient):
                 if resp.status == 401:
                     raise SubsonicAuthError("Stream authentication failed")
                 if resp.status >= 400:
-                    raise StreamError(f"Stream HTTP {resp.status} for song {song_id}")
-                content_type = resp.headers.get("Content-Type", "")
-                if "xml" in content_type:
                     body = await resp.text()
-                    raise StreamError(f"Stream returned error XML: {body[:300]}")
+                    raise StreamError(
+                        f"Stream HTTP {resp.status} for song {song_id}: {body[:200]}"
+                    )
+                content_type = resp.headers.get("Content-Type", "")
+                if "xml" in content_type or "json" in content_type:
+                    body = await resp.text()
+                    raise StreamError(f"Stream returned error body: {body[:300]}")
+                total = 0
                 async for chunk in resp.content.iter_chunked(64 * 1024):
                     if chunk:
+                        total += len(chunk)
                         yield chunk
+                if total == 0:
+                    raise StreamError(f"Stream returned no audio data for song {song_id}")
+                logger.debug(
+                    "Stream complete song_id=%s bytes=%s content_type=%s",
+                    song_id,
+                    total,
+                    content_type,
+                )
         except aiohttp.ClientError as exc:
             raise StreamError(f"Stream network error for song {song_id}: {exc}") from exc
 

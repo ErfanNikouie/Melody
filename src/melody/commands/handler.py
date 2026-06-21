@@ -31,9 +31,10 @@ class CommandHandler:
         name = command.name
 
         async def feedback(text: str) -> None:
-            await session.send_message(text)
             if notify:
                 await notify(text)
+            else:
+                await session.send_message(text)
 
         if name in ("play", "queue") and not command.query:
             await feedback("Please provide a search query.")
