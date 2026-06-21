@@ -1,0 +1,126 @@
+"""FFmpeg transcoding subprocess wrapper."""
+
+from __future__ import annotations
+
+import asyncio
+import shutil
+from collections.abc import AsyncIterator
+
+from melody.logging import get_logger
+
+logger = get_logger(__name__)
+
+SAMPLE_RATE = 48000
+CHANNELS = 2
+BYTES_PER_SAMPLE = 2
+FRAME_DURATION_SEC = 0.02
+PCM_FRAME_BYTES = int(SAMPLE_RATE * FRAME_DURATION_SEC * CHANNELS * BYTES_PER_SAMPLE)
+
+
+def find_ffmpeg() -> str:
+    path = shutil.which("ffmpeg")
+    if path is None:
+        raise RuntimeError("ffmpeg not found in PATH")
+    return path
+
+
+class FFmpegTranscoder:
+    """Pipe encoded audio through FFmpeg to Mumble-compatible PCM."""
+
+    def __init__(self) -> None:
+        self._process: asyncio.subprocess.Process | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
+        self._stderr_lines: list[str] = []
+
+    @property
+    def pcm_frame_bytes(self) -> int:
+        return PCM_FRAME_BYTES
+
+    async def start(self) -> None:
+        ffmpeg = find_ffmpeg()
+        self._process = await asyncio.create_subprocess_exec(
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-nostdin",
+            "-probesize",
+            "32768",
+            "-analyzeduration",
+            "0",
+            "-i",
+            "pipe:0",
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            str(SAMPLE_RATE),
+            "-ac",
+            str(CHANNELS),
+            "pipe:1",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        self._stderr_task = asyncio.create_task(self._collect_stderr())
+
+    async def _collect_stderr(self) -> None:
+        if self._process is None or self._process.stderr is None:
+            return
+        while True:
+            line = await self._process.stderr.readline()
+            if not line:
+                break
+            text = line.decode(errors="replace").strip()
+            if text:
+                self._stderr_lines.append(text)
+
+    async def write(self, data: bytes) -> None:
+        if self._process is None or self._process.stdin is None:
+            return
+        if not data:
+            return
+        self._process.stdin.write(data)
+        await self._process.stdin.drain()
+
+    async def close_input(self) -> None:
+        if self._process and self._process.stdin:
+            self._process.stdin.close()
+            await self._process.stdin.wait_closed()
+
+    async def read_pcm_frames(self) -> AsyncIterator[bytes]:
+        if self._process is None or self._process.stdout is None:
+            return
+        stdout = self._process.stdout
+        while True:
+            frame = await stdout.read(PCM_FRAME_BYTES)
+            if not frame:
+                break
+            if len(frame) < PCM_FRAME_BYTES:
+                frame = frame + b"\x00" * (PCM_FRAME_BYTES - len(frame))
+            yield frame
+
+    async def wait(self) -> int:
+        if self._process is None:
+            return -1
+        if self._stderr_task:
+            await self._stderr_task
+        return await self._process.wait()
+
+    def stderr_summary(self) -> str:
+        return "; ".join(self._stderr_lines[-5:])
+
+    async def stop(self) -> None:
+        if self._process is None:
+            return
+        if self._process.returncode is None:
+            self._process.terminate()
+            try:
+                await asyncio.wait_for(self._process.wait(), timeout=5.0)
+            except TimeoutError:
+                self._process.kill()
+                await self._process.wait()
+        if self._stderr_task and not self._stderr_task.done():
+            self._stderr_task.cancel()
+        self._process = None

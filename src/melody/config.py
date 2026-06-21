@@ -1,0 +1,58 @@
+"""Application configuration via environment variables."""
+
+from __future__ import annotations
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Melody configuration loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # Subsonic
+    subsonic_url: str = Field(alias="SUBSONIC_URL")
+    subsonic_username: str = Field(alias="SUBSONIC_USERNAME")
+    subsonic_password: str = Field(alias="SUBSONIC_PASSWORD")
+
+    # Commands
+    command_prefixes: str = Field(default="m/,melody/,/", alias="COMMAND_PREFIXES")
+
+    # Playback / buffering
+    disconnect_grace_period: float = Field(default=300.0, alias="DISCONNECT_GRACE_PERIOD")
+    audio_buffer_max_mb: int = Field(default=256, alias="AUDIO_BUFFER_MAX_MB")
+    audio_buffer_start_seconds: float = Field(default=3.0, alias="AUDIO_BUFFER_START_SECONDS")
+
+    # Logging
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    # Mumble
+    mumble_host: str = Field(alias="MUMBLE_HOST")
+    mumble_port: int = Field(default=64738, alias="MUMBLE_PORT")
+    mumble_username: str = Field(alias="MUMBLE_USERNAME")
+    mumble_password: str = Field(default="", alias="MUMBLE_PASSWORD")
+    mumble_tls: bool = Field(default=False, alias="MUMBLE_TLS")
+
+    @field_validator("subsonic_url")
+    @classmethod
+    def strip_trailing_slash(cls, value: str) -> str:
+        return value.rstrip("/")
+
+    @property
+    def prefixes(self) -> list[str]:
+        """Return command prefixes sorted longest-first for greedy matching."""
+        parts = [p.strip() for p in self.command_prefixes.split(",") if p.strip()]
+        return sorted(parts, key=len, reverse=True)
+
+    @property
+    def audio_buffer_max_bytes(self) -> int:
+        return self.audio_buffer_max_mb * 1024 * 1024
+
+
+def get_settings() -> Settings:
+    return Settings()  # type: ignore[call-arg]
