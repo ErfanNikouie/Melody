@@ -177,7 +177,9 @@ class MumbleConnection:
                 logger.warning("Voice setup skipped user=%s (sound_output missing)", self._username)
                 return
             if getattr(self._mumble, "server_max_bandwidth", None) is not None:
-                self._mumble.set_bandwidth(96000)
+                self._mumble.set_bandwidth(128000)
+            sound_out = self._mumble.sound_output
+            sound_out.set_audio_per_packet(0.04)
             myself = self._mumble.users.myself
             if myself is None:
                 logger.warning("Voice setup skipped user=%s (myself unknown)", self._username)
@@ -279,6 +281,20 @@ class MumbleConnection:
 
     async def send_pcm(self, data: bytes) -> None:
         await asyncio.to_thread(self._send_pcm_sync, data)
+
+    async def send_pcm_batch(self, chunks: list[bytes]) -> None:
+        if not chunks:
+            return
+        await asyncio.to_thread(self._send_pcm_batch_sync, chunks)
+
+    def _send_pcm_batch_sync(self, chunks: list[bytes]) -> None:
+        if self._mumble is None or not self._has_sound_output():
+            return
+        if self._mumble.sound_output.encoder is None:
+            logger.warning("Dropped PCM batch user=%s (Opus encoder not ready)", self._username)
+            return
+        for data in chunks:
+            self._mumble.sound_output.add_sound(data)
 
     def _send_pcm_sync(self, data: bytes) -> None:
         if self._mumble is None or not self._has_sound_output():

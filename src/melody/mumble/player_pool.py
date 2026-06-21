@@ -102,6 +102,7 @@ class PlayerPool:
                 start_seconds=self._settings.audio_buffer_start_seconds,
                 grace_period=self._settings.disconnect_grace_period,
                 send_pcm=connection.send_pcm,
+                send_pcm_batch=connection.send_pcm_batch,
                 get_buffer_size=connection.get_buffer_size,
                 wait_for_audio_encoder=connection.wait_for_audio_encoder,
                 join_channel=lambda cid=channel_id: connection.join_channel(cid),

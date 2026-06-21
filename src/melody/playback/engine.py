@@ -9,12 +9,14 @@ from melody.logging import get_logger
 from melody.models import PlaybackState, QueueItem
 from melody.playback.buffer import GlobalBufferPool
 from melody.playback.ffmpeg import FRAME_DURATION_SEC, FFmpegTranscoder
+from melody.playback.pcm_pacer import PcmPacer
 from melody.playback.queue import QueueManager
 from melody.protocols import ISubsonicClient
 
 logger = get_logger(__name__)
 
 SendPcmCallback = Callable[[bytes], Awaitable[None]]
+SendPcmBatchCallback = Callable[[list[bytes]], Awaitable[None]]
 GetBufferSizeCallback = Callable[[], float]
 
 
@@ -29,6 +31,7 @@ class PlaybackEngine:
         *,
         start_seconds: float,
         send_pcm: SendPcmCallback,
+        send_pcm_batch: SendPcmBatchCallback | None = None,
         get_buffer_size: GetBufferSizeCallback,
     ) -> None:
         self._subsonic = subsonic
@@ -36,6 +39,7 @@ class PlaybackEngine:
         self._pool = buffer_pool
         self._start_seconds = start_seconds
         self._send_pcm = send_pcm
+        self._send_pcm_batch = send_pcm_batch
         self._get_buffer_size = get_buffer_size
         self._state = PlaybackState.IDLE
         self._task: asyncio.Task[None] | None = None
@@ -118,37 +122,75 @@ class PlaybackEngine:
         frames_sent = 0
         pcm_iter = transcoder.read_pcm_frames().__aiter__()
         first_frame_timeout = 30.0
+        pacer = PcmPacer(self._get_buffer_size, frame_duration_sec=FRAME_DURATION_SEC)
+        loop = asyncio.get_running_loop()
+        pending_batch: list[bytes] = []
+        prebuffer_batch_size = 4
+        max_prebuffer_frames = 12
+
+        async def read_next_frame() -> bytes | None:
+            try:
+                if frames_sent == 0:
+                    return await asyncio.wait_for(
+                        pcm_iter.__anext__(),
+                        timeout=first_frame_timeout,
+                    )
+                return await pcm_iter.__anext__()
+            except StopAsyncIteration:
+                return None
+            except TimeoutError:
+                logger.error(
+                    "FFmpeg produced no PCM within %ss track_id=%s stderr=%s",
+                    first_frame_timeout,
+                    track.id,
+                    transcoder.stderr_summary(),
+                )
+                return None
+
+        async def flush_batch() -> None:
+            nonlocal frames_sent
+            if not pending_batch:
+                return
+            first_flush = frames_sent == 0
+            if self._send_pcm_batch and len(pending_batch) > 1:
+                await self._send_pcm_batch(pending_batch)
+            else:
+                for chunk in pending_batch:
+                    await self._send_pcm(chunk)
+            frames_sent += len(pending_batch)
+            if first_flush:
+                logger.info(
+                    "PCM playback started track_id=%s mumble_buffer=%.2fs",
+                    track.id,
+                    self._get_buffer_size(),
+                )
+            pending_batch.clear()
 
         try:
-            while True:
-                try:
-                    if frames_sent == 0:
-                        frame = await asyncio.wait_for(
-                            pcm_iter.__anext__(),
-                            timeout=first_frame_timeout,
-                        )
-                    else:
-                        frame = await pcm_iter.__anext__()
-                except StopAsyncIteration:
+            while not pacer.primed and not self._stop_event.is_set():
+                if frames_sent >= max_prebuffer_frames:
+                    pacer.force_prime(loop)
                     break
-                except TimeoutError:
-                    logger.error(
-                        "FFmpeg produced no PCM within %ss track_id=%s stderr=%s",
-                        first_frame_timeout,
-                        track.id,
-                        transcoder.stderr_summary(),
-                    )
-                    break
-                if self._stop_event.is_set():
+                frame = await read_next_frame()
+                if frame is None:
                     break
                 await self._pause_event.wait()
-                await self._send_pcm(frame)
-                frames_sent += 1
-                if frames_sent == 1:
-                    logger.info("PCM playback started track_id=%s", track.id)
-                # pymumble send_audio emits at real-time; feeding faster only fills the buffer.
-                await asyncio.sleep(FRAME_DURATION_SEC)
+                pending_batch.append(frame)
+                if len(pending_batch) >= prebuffer_batch_size:
+                    await flush_batch()
+                pacer.delay_before_next_frame(loop)
+
+            while not self._stop_event.is_set():
+                await pacer.wait(loop)
+                frame = await read_next_frame()
+                if frame is None:
+                    break
+                await self._pause_event.wait()
+                pending_batch.append(frame)
+                await flush_batch()
         finally:
+            if pending_batch and not self._stop_event.is_set():
+                await flush_batch()
             code = await transcoder.wait()
             await transcoder.stop()
             if frames_sent == 0:

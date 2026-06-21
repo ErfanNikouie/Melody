@@ -13,7 +13,8 @@ logger = get_logger(__name__)
 SAMPLE_RATE = 48000
 CHANNELS = 2
 BYTES_PER_SAMPLE = 2
-FRAME_DURATION_SEC = 0.02
+# 40 ms frames align with Mumble's typical audio packet size and reduce overhead.
+FRAME_DURATION_SEC = 0.04
 PCM_FRAME_BYTES = int(SAMPLE_RATE * FRAME_DURATION_SEC * CHANNELS * BYTES_PER_SAMPLE)
 
 

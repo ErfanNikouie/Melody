@@ -17,6 +17,7 @@ JoinChannelCallback = Callable[[], Awaitable[None]]
 LeaveChannelCallback = Callable[[], Awaitable[None]]
 SendMessageCallback = Callable[[str], Awaitable[None]]
 SendPcmCallback = Callable[[bytes], Awaitable[None]]
+SendPcmBatchCallback = Callable[[list[bytes]], Awaitable[None]]
 GetBufferSizeCallback = Callable[[], float]
 WaitForAudioEncoderCallback = Callable[[], Awaitable[bool]]
 OnShutdownCallback = Callable[[], Awaitable[None]]
@@ -35,6 +36,7 @@ class ChannelSession:
         start_seconds: float,
         grace_period: float,
         send_pcm: SendPcmCallback,
+        send_pcm_batch: SendPcmBatchCallback,
         get_buffer_size: GetBufferSizeCallback,
         wait_for_audio_encoder: WaitForAudioEncoderCallback,
         join_channel: JoinChannelCallback,
@@ -61,6 +63,7 @@ class ChannelSession:
             buffer_pool,
             start_seconds=start_seconds,
             send_pcm=send_pcm,
+            send_pcm_batch=send_pcm_batch,
             get_buffer_size=get_buffer_size,
         )
 
