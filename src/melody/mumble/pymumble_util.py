@@ -23,8 +23,12 @@ class ParsedTextMessage:
     target_channel_id: int | None
 
 
+from melody.mumble.pymumble_compat import install_ssl_wrap_socket_compat
+
+
 def load_pymumble() -> tuple[Any, type[Exception]]:
     """Return (pymumble module, connection-rejected exception class)."""
+    install_ssl_wrap_socket_compat()
     import pymumble_py3 as pymumble
     from pymumble_py3.errors import ConnectionRejectedError
 

@@ -38,6 +38,15 @@ def test_callbacks_use_callbacks_object() -> None:
     assert "def set_callback" not in source.split("class Mumble", maxsplit=1)[-1]
 
 
+def test_ssl_wrap_socket_compat_on_modern_python() -> None:
+    import ssl
+
+    from melody.mumble.pymumble_compat import install_ssl_wrap_socket_compat
+
+    install_ssl_wrap_socket_compat()
+    assert hasattr(ssl, "wrap_socket")
+
+
 def test_load_pymumble_imports_without_deny_error() -> None:
     from melody.mumble.pymumble_util import load_pymumble
 
