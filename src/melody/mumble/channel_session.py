@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 
 from melody.commands.messages import format_no_previous, format_now_playing, format_queue_end
 from melody.logging import get_logger
+from melody.models import PlaybackStatus
 from melody.playback.buffer import GlobalBufferPool
 from melody.playback.engine import PlaybackEngine
 from melody.playback.queue import QueueManager
@@ -132,6 +133,10 @@ class ChannelSession:
 
     def set_volume_percent(self, percent: int) -> None:
         self.engine.set_volume_percent(percent)
+
+    @property
+    def playback_status(self) -> PlaybackStatus:
+        return self.engine.playback_status
 
     def update_human_count(self, count: int) -> None:
         self._human_count = count

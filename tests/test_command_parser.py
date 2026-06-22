@@ -121,3 +121,9 @@ def test_help_command(parser: CommandParser) -> None:
     assert cmd is not None
     assert cmd.name == "help"
     assert cmd.query is None
+
+
+def test_current_command(parser: CommandParser) -> None:
+    cmd = parser.parse("m/current")
+    assert cmd is not None
+    assert cmd.name == "current"

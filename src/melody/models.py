@@ -19,6 +19,20 @@ class PlaybackState(str, Enum):
     PAUSED = "paused"
 
 
+@dataclass(frozen=True, slots=True)
+class PlaybackStatus:
+    """Snapshot of what is playing and how far along it is."""
+
+    track: Track | None
+    state: PlaybackState
+    elapsed_seconds: float = 0.0
+    total_seconds: int | None = None  # None when duration unknown
+
+    @property
+    def is_active(self) -> bool:
+        return self.track is not None and self.state != PlaybackState.IDLE
+
+
 class PlayerMode(str, Enum):
     """How MelodyPlayer usernames are assigned."""
 

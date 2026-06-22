@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from melody.logging import get_logger
-from melody.models import PlaybackState, QueueItem, Track
+from melody.models import PlaybackState, PlaybackStatus, QueueItem, Track
 from melody.playback.buffer import GlobalBufferPool
 from melody.playback.ffmpeg import FRAME_DURATION_SEC, FFmpegTranscoder
 from melody.playback.pcm_pacer import PcmPacer
@@ -52,6 +52,23 @@ class PlaybackEngine:
         self._pause_event.set()
         self._announce_next_track = True
         self._volume = DEFAULT_VOLUME_PERCENT / 100.0
+        self._active_track: Track | None = None
+        self._elapsed_seconds = 0.0
+
+    @property
+    def playback_status(self) -> PlaybackStatus:
+        track = self._active_track
+        if track is None and self._queue.current is not None:
+            track = self._queue.current.track
+        total: int | None = None
+        if track is not None and track.duration > 0:
+            total = track.duration
+        return PlaybackStatus(
+            track=track,
+            state=self._state,
+            elapsed_seconds=self._elapsed_seconds,
+            total_seconds=total,
+        )
 
     @property
     def volume_percent(self) -> int:
@@ -70,6 +87,8 @@ class PlaybackEngine:
     def stop(self) -> None:
         self._stop_event.set()
         self._pause_event.set()
+        self._active_track = None
+        self._elapsed_seconds = 0.0
         if self._task and not self._task.done():
             self._task.cancel()
 
@@ -128,6 +147,8 @@ class PlaybackEngine:
 
     async def _play_item(self, item: QueueItem) -> None:
         track = item.track
+        self._active_track = track
+        self._elapsed_seconds = 0.0
         stream_url = self._subsonic.stream_url(track.id)
         self._state = PlaybackState.BUFFERING
         logger.info(
@@ -180,6 +201,7 @@ class PlaybackEngine:
                 for chunk in scaled:
                     await self._send_pcm(chunk)
             frames_sent += len(pending_batch)
+            self._elapsed_seconds = frames_sent * FRAME_DURATION_SEC
             if first_flush:
                 logger.info(
                     "PCM playback started track_id=%s mumble_buffer=%.2fs",

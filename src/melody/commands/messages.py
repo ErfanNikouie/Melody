@@ -4,18 +4,83 @@ from __future__ import annotations
 
 from html import escape
 
-from melody.models import QueueItem, Track
+from melody.models import PlaybackState, PlaybackStatus, QueueItem, Track
 
 _NOW_PLAYING_COLOR = "#6ab7ff"
 _ACCENT_COLOR = "#b0bec5"
+_PAUSED_COLOR = "#ffb74d"
+_BUFFERING_COLOR = "#ffd54f"
 
 
 def _e(text: str) -> str:
     return escape(text, quote=False)
 
 
+def format_duration(seconds: float) -> str:
+    """Format seconds as M:SS or H:MM:SS."""
+    total = max(0, int(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def format_progress_line(
+    elapsed: float,
+    total: int | None,
+    *,
+    width: int = 14,
+) -> str:
+    """Stylized elapsed/total with a Unicode progress bar."""
+    elapsed_text = format_duration(elapsed)
+    if total is None or total <= 0:
+        return (
+            f'<span style="color:{_ACCENT_COLOR}">{elapsed_text}</span>'
+            f' <span style="color:{_ACCENT_COLOR}">· live</span>'
+        )
+
+    pct = min(1.0, elapsed / total)
+    filled = int(round(pct * width))
+    bar = "█" * filled + "░" * (width - filled)
+    total_text = format_duration(total)
+    pct_text = int(round(pct * 100))
+    return (
+        f'<code>{bar}</code> '
+        f'<span style="color:{_ACCENT_COLOR}">{elapsed_text} / {total_text}</span> '
+        f'<span style="color:{_ACCENT_COLOR}">({pct_text}%)</span>'
+    )
+
+
+def format_state_label(state: PlaybackState) -> str:
+    if state == PlaybackState.PLAYING:
+        return f'▶️ <span style="color:{_NOW_PLAYING_COLOR}"><b>Playing</b></span>'
+    if state == PlaybackState.PAUSED:
+        return f'⏸️ <span style="color:{_PAUSED_COLOR}"><b>Paused</b></span>'
+    if state == PlaybackState.BUFFERING:
+        return f'⏳ <span style="color:{_BUFFERING_COLOR}"><b>Buffering</b></span>'
+    return f'<span style="color:{_ACCENT_COLOR}"><b>Idle</b></span>'
+
+
 def format_track_line(track: Track) -> str:
     return _e(track.display_name)
+
+
+def format_playback_status(status: PlaybackStatus) -> str:
+    """Now-playing block with state, title, and progress."""
+    if status.track is None or not status.is_active:
+        return format_nothing_playing()
+
+    lines = [
+        format_state_label(status.state),
+        f'<span style="color:{_NOW_PLAYING_COLOR}"><b>{format_track_line(status.track)}</b></span>',
+        format_progress_line(status.elapsed_seconds, status.total_seconds),
+    ]
+    return "<br/>".join(lines)
+
+
+def format_nothing_playing() -> str:
+    return f'💤 <span style="color:{_ACCENT_COLOR}"><b>Nothing playing</b></span>'
 
 
 def format_now_playing(track: Track) -> str:
@@ -88,6 +153,7 @@ def format_queue_list(
     current: QueueItem | None,
     upcoming: tuple[QueueItem, ...],
     *,
+    status: PlaybackStatus | None = None,
     max_items: int = 15,
 ) -> str:
     if current is None and not upcoming:
@@ -95,10 +161,20 @@ def format_queue_list(
 
     lines: list[str] = []
     total = (1 if current else 0) + len(upcoming)
-    lines.append(f"🎵 <b>Queue</b> <span style=\"color:{_ACCENT_COLOR}\">({total} track{'s' if total != 1 else ''})</span>")
+    lines.append(
+        f"🎵 <b>Queue</b> <span style=\"color:{_ACCENT_COLOR}\">"
+        f"({total} track{'s' if total != 1 else ''})</span>"
+    )
     lines.append("─" * 24)
 
-    if current is not None:
+    if status is not None and status.track is not None and status.is_active:
+        lines.append(format_state_label(status.state))
+        lines.append(
+            f'<span style="color:{_NOW_PLAYING_COLOR}"><b>{format_track_line(status.track)}</b></span>'
+        )
+        lines.append(format_progress_line(status.elapsed_seconds, status.total_seconds))
+        lines.append("─" * 24)
+    elif current is not None:
         lines.append(
             f"▶️ <span style=\"color:{_NOW_PLAYING_COLOR}\"><b>{format_track_line(current.track)}</b></span>"
         )
@@ -131,10 +207,11 @@ def format_help(prefix: str = "m/") -> str:
         "<b>Playback</b>",
         f"<code>{p}play [opts] query</code> — search &amp; play now",
         f"<code>{p}queue [opts] query</code> — search &amp; add to queue",
+        f"<code>{p}current</code> — now playing &amp; progress",
         f"<code>{p}stop</code> — stop &amp; clear queue",
         f"<code>{p}pause</code> / <code>{p}resume</code>",
         f"<code>{p}next</code> / <code>{p}back</code> — skip tracks",
-        f"<code>{p}list</code> — show queue",
+        f"<code>{p}list</code> — show queue &amp; progress",
         f"<code>{p}volume [0-100|up|down]</code>",
         f"<code>{p}quit</code> — leave channel",
         "─" * 28,

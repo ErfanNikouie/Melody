@@ -202,7 +202,8 @@ Commands use a configured prefix:
 | `resume` | Resume playback |
 | `next` | Skip to next track (announces the new track) |
 | `back` | Return to previous track |
-| `list` | Show the queue (current track highlighted) |
+| `list` | Show the queue with progress and play/pause status |
+| `current` | Show the now-playing track with elapsed/total time |
 | `volume [level]` | Show or set playback volume (0–100) |
 | `help` | Show all commands and usage |
 | `quit` / `exit` | Stop, leave channel, destroy session |
@@ -262,6 +263,7 @@ m/play -a dark side of the moon
 /play -t queen bohemian rhapsody
 m/queue -r -s rock classics
 m/list
+m/current
 m/help
 /stop
 m/next

@@ -11,6 +11,7 @@ from melody.commands.messages import (
     format_no_results,
     format_now_playing,
     format_paused,
+    format_playback_status,
     format_playing,
     format_queue_list,
     format_queued,
@@ -94,6 +95,10 @@ class CommandHandler:
             await self._handle_list(session, feedback)
             return False
 
+        if name == "current":
+            await feedback(format_playback_status(session.playback_status))
+            return False
+
         if name == "volume":
             await self._handle_volume(session, command, feedback)
             return False
@@ -133,7 +138,13 @@ class CommandHandler:
         feedback: NotifyCallback,
     ) -> None:
         queue = session.queue
-        await feedback(format_queue_list(queue.current, queue.upcoming))
+        await feedback(
+            format_queue_list(
+                queue.current,
+                queue.upcoming,
+                status=session.playback_status,
+            )
+        )
 
     async def _handle_play(
         self,

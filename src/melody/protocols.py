@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Protocol
 
-from melody.models import Album, Playlist, Track
+from melody.models import Album, PlaybackStatus, Playlist, Track
 
 if TYPE_CHECKING:
     from melody.playback.queue import QueueManager
@@ -42,6 +42,9 @@ class IChannelSession(Protocol):
 
     @property
     def queue(self) -> QueueManager: ...
+
+    @property
+    def playback_status(self) -> PlaybackStatus: ...
 
     async def send_message(self, message: str) -> None: ...
 
