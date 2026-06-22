@@ -7,10 +7,11 @@ from collections.abc import Awaitable, Callable
 
 from melody.commands.messages import format_no_previous, format_now_playing, format_queue_end
 from melody.logging import get_logger
-from melody.models import PlaybackStatus
+from melody.models import PlaybackStatus, Track
 from melody.playback.buffer import GlobalBufferPool
 from melody.playback.engine import PlaybackEngine
 from melody.playback.queue import QueueManager
+from melody.playback.volume import DEFAULT_VOLUME_PERCENT, apply_volume_pcm, clamp_volume_percent
 from melody.protocols import ISubsonicClient
 
 logger = get_logger(__name__)
@@ -36,6 +37,7 @@ class ChannelSession:
         buffer_pool: GlobalBufferPool,
         *,
         start_seconds: float,
+        starting_volume_percent: int = DEFAULT_VOLUME_PERCENT,
         grace_period: float,
         send_pcm: SendPcmCallback,
         send_pcm_batch: SendPcmBatchCallback,
@@ -64,6 +66,7 @@ class ChannelSession:
             self.queue,
             buffer_pool,
             start_seconds=start_seconds,
+            starting_volume_percent=starting_volume_percent,
             send_pcm=send_pcm,
             send_pcm_batch=send_pcm_batch,
             get_buffer_size=get_buffer_size,

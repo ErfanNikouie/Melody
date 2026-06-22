@@ -39,3 +39,16 @@ def test_search_weights_must_sum_to_100() -> None:
         Settings(
             **_minimal_env(SEARCH_RELEVANCE_PERCENT=80, SEARCH_POPULARITY_PERCENT=10),
         )  # type: ignore[arg-type]
+
+
+def test_starting_volume_default_and_custom() -> None:
+    settings = Settings(**_minimal_env())  # type: ignore[arg-type]
+    assert settings.starting_volume == 100
+
+    settings = Settings(**_minimal_env(STARTING_VOLUME=50))  # type: ignore[arg-type]
+    assert settings.starting_volume == 50
+
+
+def test_starting_volume_must_be_0_to_100() -> None:
+    with pytest.raises(ValidationError, match="STARTING_VOLUME"):
+        Settings(**_minimal_env(STARTING_VOLUME=101))  # type: ignore[arg-type]

@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     disconnect_grace_period: float = Field(default=300.0, alias="DISCONNECT_GRACE_PERIOD")
     audio_buffer_max_mb: int = Field(default=256, alias="AUDIO_BUFFER_MAX_MB")
     audio_buffer_start_seconds: float = Field(default=3.0, alias="AUDIO_BUFFER_START_SECONDS")
+    starting_volume: int = Field(default=100, alias="STARTING_VOLUME")
 
     # Search ranking (must sum to 100)
     search_relevance_percent: int = Field(default=85, alias="SEARCH_RELEVANCE_PERCENT")
@@ -56,6 +57,13 @@ class Settings(BaseSettings):
     def validate_search_percent_range(cls, value: int) -> int:
         if not 0 <= value <= 100:
             raise ValueError("Search ranking percentages must be between 0 and 100")
+        return value
+
+    @field_validator("starting_volume")
+    @classmethod
+    def validate_starting_volume(cls, value: int) -> int:
+        if not 0 <= value <= 100:
+            raise ValueError("STARTING_VOLUME must be between 0 and 100")
         return value
 
     @model_validator(mode="after")

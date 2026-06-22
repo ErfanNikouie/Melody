@@ -32,6 +32,7 @@ class PlaybackEngine:
         buffer_pool: GlobalBufferPool,
         *,
         start_seconds: float,
+        starting_volume_percent: int = DEFAULT_VOLUME_PERCENT,
         send_pcm: SendPcmCallback,
         send_pcm_batch: SendPcmBatchCallback | None = None,
         get_buffer_size: GetBufferSizeCallback,
@@ -51,7 +52,7 @@ class PlaybackEngine:
         self._pause_event = asyncio.Event()
         self._pause_event.set()
         self._announce_next_track = True
-        self._volume = DEFAULT_VOLUME_PERCENT / 100.0
+        self._volume = clamp_volume_percent(starting_volume_percent) / 100.0
         self._active_track: Track | None = None
         self._elapsed_seconds = 0.0
 

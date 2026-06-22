@@ -100,6 +100,7 @@ class PlayerPool:
                 self._subsonic,
                 self._buffer_pool,
                 start_seconds=self._settings.audio_buffer_start_seconds,
+                starting_volume_percent=self._settings.starting_volume,
                 grace_period=self._settings.disconnect_grace_period,
                 send_pcm=connection.send_pcm,
                 send_pcm_batch=connection.send_pcm_batch,

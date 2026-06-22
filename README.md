@@ -181,6 +181,7 @@ pytest
 | `DISCONNECT_GRACE_PERIOD` | No | `300` | Seconds before leaving empty channels |
 | `AUDIO_BUFFER_MAX_MB` | No | `256` | Max buffer size across all streams |
 | `AUDIO_BUFFER_START_SECONDS` | No | `3` | Min buffer before playback starts |
+| `STARTING_VOLUME` | No | `100` | Initial playback volume per channel (0–100) |
 | `SEARCH_RELEVANCE_PERCENT` | No | `85` | Weight for title/artist match (0–100) |
 | `SEARCH_POPULARITY_PERCENT` | No | `15` | Weight for play count / rating (0–100) |
 | `LOG_LEVEL` | No | `INFO` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
