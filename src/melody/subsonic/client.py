@@ -56,6 +56,10 @@ class SubsonicClient(ISubsonicClient):
         self._session = session
         self._owns_session = session is None
 
+    @property
+    def base_url(self) -> str:
+        return self._base_url
+
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None:
             self._session = aiohttp.ClientSession(timeout=DEFAULT_TIMEOUT)
@@ -111,8 +115,16 @@ class SubsonicClient(ISubsonicClient):
         if result is None:
             result = root.find(".//searchResult3")
         if result is None:
+            logger.debug("search3 track query=%r: no searchResult3 element", query)
             return []
-        return [parse_track(e) for e in _findall(result, "song")]
+        tracks = [parse_track(e) for e in _findall(result, "song")]
+        logger.info(
+            "search3 tracks query=%r backend=%s count=%s",
+            query,
+            self._base_url,
+            len(tracks),
+        )
+        return tracks
 
     async def search_albums(self, query: str, limit: int = 20) -> list[Album]:
         root = await self._fetch_xml(
@@ -123,8 +135,25 @@ class SubsonicClient(ISubsonicClient):
         if result is None:
             result = root.find(".//searchResult3")
         if result is None:
+            logger.debug("search3 album query=%r: no searchResult3 element", query)
             return []
-        return [parse_album_meta(e) for e in _findall(result, "album")]
+        albums = [parse_album_meta(e) for e in _findall(result, "album")]
+        logger.info(
+            "search3 albums query=%r backend=%s count=%s",
+            query,
+            self._base_url,
+            len(albums),
+        )
+        for index, album in enumerate(albums[:5]):
+            logger.debug(
+                "  album[%s] id=%s name=%r artist=%r song_count=%s",
+                index,
+                album.id,
+                album.name,
+                album.artist,
+                album.song_count,
+            )
+        return albums
 
     async def search_playlists(self, query: str, limit: int = 20) -> list[Playlist]:
         root = await self._fetch_xml("getPlaylists.view")
@@ -142,6 +171,12 @@ class SubsonicClient(ISubsonicClient):
                 matches.append(playlist)
             if len(matches) >= limit:
                 break
+        logger.info(
+            "getPlaylists filter query=%r backend=%s count=%s",
+            query,
+            self._base_url,
+            len(matches),
+        )
         return matches
 
     async def get_playlist(self, playlist_id: str) -> Playlist:
@@ -155,7 +190,15 @@ class SubsonicClient(ISubsonicClient):
             playlist_el = root.find(".//playlist")
         if playlist_el is None:
             raise PlaylistNotFoundError(f"Playlist {playlist_id} not found")
-        return parse_playlist(playlist_el)
+        playlist = parse_playlist(playlist_el)
+        logger.info(
+            "getPlaylist id=%s name=%r backend=%s track_count=%s",
+            playlist_id,
+            playlist.name,
+            self._base_url,
+            len(playlist.tracks),
+        )
+        return playlist
 
     async def get_album(self, album_id: str) -> Album:
         try:
@@ -168,7 +211,22 @@ class SubsonicClient(ISubsonicClient):
             album_el = root.find(".//album")
         if album_el is None:
             raise AlbumNotFoundError(f"Album {album_id} not found")
-        return parse_album(album_el)
+        album = parse_album(album_el)
+        logger.info(
+            "getAlbum id=%s name=%r backend=%s track_count=%s",
+            album_id,
+            album.name,
+            self._base_url,
+            len(album.tracks),
+        )
+        if not album.tracks:
+            logger.warning(
+                "getAlbum id=%s returned 0 tracks on backend=%s — "
+                "streaming-only albums require SUBSONIC_URL pointing at Octo Fiesta",
+                album_id,
+                self._base_url,
+            )
+        return album
 
     async def get_song(self, song_id: str) -> Track:
         try:

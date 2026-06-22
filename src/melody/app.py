@@ -61,9 +61,10 @@ class MelodyApp:
             return
 
         logger.info(
-            "Melody running (coordinator=%s, player_mode=%s)",
+            "Melody running (coordinator=%s, player_mode=%s, subsonic=%s)",
             self._settings.mumble_username,
             self._settings.player_mode,
+            self._settings.subsonic_url,
         )
         await self._shutdown_event.wait()
         await self.shutdown()

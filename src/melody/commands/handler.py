@@ -16,6 +16,7 @@ from melody.commands.messages import (
     format_queue_list,
     format_queued,
     format_resumed,
+    format_search_error,
     format_stopped,
     format_volume,
     format_volume_usage,
@@ -25,6 +26,7 @@ from melody.models import ParsedCommand, QueueItem, RepeatMode, SearchMatch
 from melody.playback.volume import parse_volume_command, resolve_volume_percent
 from melody.protocols import IChannelSession
 from melody.services.search import SearchService
+from melody.subsonic.errors import AlbumNotFoundError, PlaylistNotFoundError, SubsonicError
 
 logger = get_logger(__name__)
 
@@ -60,12 +62,12 @@ class CommandHandler:
 
         if name == "play":
             await session.ensure_joined()
-            await self._handle_play(session, command, feedback)
+            await self._handle_play(session, command, feedback, notify=notify)
             return False
 
         if name == "queue":
             await session.ensure_joined()
-            await self._handle_queue(session, command, feedback)
+            await self._handle_queue(session, command, feedback, notify=notify)
             return False
 
         if name == "stop":
@@ -151,39 +153,51 @@ class CommandHandler:
         session: IChannelSession,
         command: ParsedCommand,
         feedback: NotifyCallback,
+        *,
+        notify: NotifyCallback | None = None,
     ) -> None:
         await session.stop_playback(clear_all=True)
 
-        match = await self._search.resolve(command.query or "", command.options)
+        match = await self._resolve_match(command, feedback)
         if match is None:
-            await feedback(format_no_results())
             return
 
         items, collection = self._match_to_queue_items(match)
         if not items:
-            await feedback(format_no_playable())
+            await feedback(
+                format_no_playable(
+                    album=command.options.album,
+                    playlist=command.options.playlist,
+                )
+            )
             return
 
         self._apply_queue_options(session, command, match)
 
         session.queue.play_now(items, **collection)
         await session.start_playback(announce=False)
-        await feedback(format_playing(match.display_name, match.track_count))
+        await self._announce_playback(match, session, feedback, notify=notify)
 
     async def _handle_queue(
         self,
         session: IChannelSession,
         command: ParsedCommand,
         feedback: NotifyCallback,
+        *,
+        notify: NotifyCallback | None = None,
     ) -> None:
-        match = await self._search.resolve(command.query or "", command.options)
+        match = await self._resolve_match(command, feedback)
         if match is None:
-            await feedback(format_no_results())
             return
 
         items, collection = self._match_to_queue_items(match)
         if not items:
-            await feedback(format_no_playable())
+            await feedback(
+                format_no_playable(
+                    album=command.options.album,
+                    playlist=command.options.playlist,
+                )
+            )
             return
 
         self._apply_queue_options(session, command, match)
@@ -192,9 +206,60 @@ class CommandHandler:
         session.queue.enqueue(items, **collection)
         if was_idle:
             await session.start_playback(announce=False)
-            await feedback(format_playing(match.display_name, match.track_count))
+            await self._announce_playback(match, session, feedback, notify=notify)
         else:
             await feedback(format_queued(match.display_name, match.track_count))
+
+    async def _resolve_match(
+        self,
+        command: ParsedCommand,
+        feedback: NotifyCallback,
+    ) -> SearchMatch | None:
+        try:
+            match = await self._search.resolve(command.query or "", command.options)
+        except AlbumNotFoundError as exc:
+            logger.warning("Album resolve failed query=%r: %s", command.query, exc)
+            await feedback(
+                format_search_error(
+                    "Album appeared in search but details could not be loaded. "
+                    "If this is from a streaming provider, set SUBSONIC_URL to Octo Fiesta (port 5274)."
+                )
+            )
+            return None
+        except PlaylistNotFoundError as exc:
+            logger.warning("Playlist resolve failed query=%r: %s", command.query, exc)
+            await feedback(format_search_error(f"Playlist could not be loaded: {exc}"))
+            return None
+        except SubsonicError as exc:
+            logger.error("Search failed query=%r: %s", command.query, exc)
+            await feedback(format_search_error(str(exc)))
+            return None
+
+        if match is None:
+            await feedback(
+                format_no_results(
+                    album=command.options.album,
+                    playlist=command.options.playlist,
+                )
+            )
+        return match
+
+    async def _announce_playback(
+        self,
+        match: SearchMatch,
+        session: IChannelSession,
+        feedback: NotifyCallback,
+        *,
+        notify: NotifyCallback | None,
+    ) -> None:
+        """Post a playing announcement; album/playlist also go to channel chat when whispered."""
+        msg = format_playing(match.display_name, match.track_count)
+        if match.kind in ("album", "playlist"):
+            await session.send_message(msg)
+            if notify:
+                await notify(msg)
+        else:
+            await feedback(msg)
 
     def _apply_queue_options(
         self,

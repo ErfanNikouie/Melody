@@ -8,6 +8,10 @@ from typing import Protocol
 
 from melody.models import Album, Playlist, SearchMatch, SearchMode, SearchWeights, Track
 from melody.protocols import ISubsonicClient
+from melody.logging import get_logger
+from melody.subsonic.errors import AlbumNotFoundError, PlaylistNotFoundError
+
+logger = get_logger(__name__)
 
 _TOKEN_RE = re.compile(r"\w+")
 
@@ -209,6 +213,30 @@ def pick_best_match(
     return track_match
 
 
+_OCTO_FIESTA_HINT = (
+    "Streaming-provider albums/playlists only work when SUBSONIC_URL points at "
+    "Octo Fiesta (e.g. http://host:5274), not Navidrome directly."
+)
+
+
+def _log_candidates(kind: str, query: str, items: list[Album] | list[Playlist] | list[Track]) -> None:
+    for index, item in enumerate(items[:8]):
+        if isinstance(item, Album):
+            logger.debug(
+                "  %s[%s] id=%s name=%r artist=%r song_count=%s",
+                kind,
+                index,
+                item.id,
+                item.name,
+                item.artist,
+                item.song_count,
+            )
+        elif isinstance(item, Playlist):
+            logger.debug("  %s[%s] id=%s name=%r song_count=%s", kind, index, item.id, item.name, item.song_count)
+        elif isinstance(item, Track):
+            logger.debug("  %s[%s] id=%s name=%r", kind, index, item.id, item.display_name)
+
+
 async def resolve_search(
     client: ISubsonicClient,
     query: str,
@@ -220,12 +248,42 @@ async def resolve_search(
         return None
 
     query = query.strip()
+    backend = getattr(client, "base_url", "unknown")
+    logger.info("Search start query=%r mode=%s backend=%s", query, mode.value, backend)
 
     if mode == SearchMode.PLAYLIST:
         playlists = await client.search_playlists(query)
+        logger.info("Search playlist candidates=%s query=%r", len(playlists), query)
+        _log_candidates("playlist", query, playlists)
+        if not playlists:
+            logger.warning("Search playlist returned 0 results query=%r backend=%s", query, backend)
+            return None
         match = rank_playlists(query, playlists, weights)
         if match and match.playlist:
-            full = await client.get_playlist(match.playlist.id)
+            logger.info(
+                "Search playlist best_match=%r id=%s score=%s",
+                match.playlist.name,
+                match.playlist.id,
+                match.score,
+            )
+            try:
+                full = await client.get_playlist(match.playlist.id)
+            except PlaylistNotFoundError:
+                logger.error(
+                    "getPlaylist failed id=%s query=%r backend=%s — %s",
+                    match.playlist.id,
+                    query,
+                    backend,
+                    _OCTO_FIESTA_HINT,
+                )
+                raise
+            if not full.tracks:
+                logger.warning(
+                    "getPlaylist id=%s name=%r returned 0 tracks backend=%s",
+                    full.id,
+                    full.name,
+                    backend,
+                )
             return SearchMatch(
                 kind="playlist",
                 score=match.score,
@@ -235,9 +293,44 @@ async def resolve_search(
 
     if mode == SearchMode.ALBUM:
         albums = await client.search_albums(query)
+        logger.info("Search album candidates=%s query=%r", len(albums), query)
+        _log_candidates("album", query, albums)
+        if not albums:
+            logger.warning(
+                "Search album returned 0 results query=%r backend=%s — %s",
+                query,
+                backend,
+                _OCTO_FIESTA_HINT,
+            )
+            return None
         match = rank_albums(query, albums, weights)
         if match and match.album:
-            full = await client.get_album(match.album.id)
+            logger.info(
+                "Search album best_match=%r id=%s score=%s",
+                match.album.display_name,
+                match.album.id,
+                match.score,
+            )
+            try:
+                full = await client.get_album(match.album.id)
+            except AlbumNotFoundError:
+                logger.error(
+                    "getAlbum failed id=%s query=%r backend=%s — album was in search but "
+                    "details missing. %s",
+                    match.album.id,
+                    query,
+                    backend,
+                    _OCTO_FIESTA_HINT,
+                )
+                raise
+            if not full.tracks:
+                logger.warning(
+                    "getAlbum id=%s name=%r returned 0 playable tracks backend=%s — %s",
+                    full.id,
+                    full.display_name,
+                    backend,
+                    _OCTO_FIESTA_HINT,
+                )
             return SearchMatch(
                 kind="album",
                 score=match.score,
@@ -246,4 +339,17 @@ async def resolve_search(
         return match
 
     tracks = await client.search_tracks(query)
-    return rank_tracks(query, tracks, weights)
+    logger.info("Search track candidates=%s query=%r", len(tracks), query)
+    _log_candidates("track", query, tracks)
+    if not tracks:
+        logger.warning("Search track returned 0 results query=%r backend=%s", query, backend)
+        return None
+    match = rank_tracks(query, tracks, weights)
+    if match and match.track:
+        logger.info(
+            "Search track best_match=%r id=%s score=%s",
+            match.track.display_name,
+            match.track.id,
+            match.score,
+        )
+    return match

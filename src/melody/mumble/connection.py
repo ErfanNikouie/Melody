@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -21,6 +22,9 @@ logger = get_logger(__name__)
 TextHandler = Callable[[ParsedTextMessage], None]
 ConnectedHandler = Callable[[], None]
 DisconnectedHandler = Callable[[], None]
+
+_MESSAGE_RETRIES = 3
+_MESSAGE_RETRY_DELAY = 0.15
 
 
 class MumbleConnection:
@@ -255,29 +259,100 @@ class MumbleConnection:
     async def move_to_root(self) -> None:
         await self.join_channel(0)
 
-    async def send_channel_message(self, channel_id: int, message: str) -> None:
-        await asyncio.to_thread(self._send_channel_message_sync, channel_id, message)
+    async def send_channel_message(self, channel_id: int, message: str) -> bool:
+        return await asyncio.to_thread(self._send_channel_message_sync, channel_id, message)
 
-    def _send_channel_message_sync(self, channel_id: int, message: str) -> None:
-        if self._mumble is None:
-            return
-        try:
-            channel = self._mumble.channels[channel_id]
-            channel.send_text_message(message)
-        except Exception:
-            logger.exception("Failed to send channel message user=%s channel_id=%s", self._username, channel_id)
+    def _send_channel_message_sync(self, channel_id: int, message: str) -> bool:
+        if self._mumble is None or not self.is_connected:
+            logger.warning(
+                "Cannot send channel message user=%s channel_id=%s (not connected)",
+                self._username,
+                channel_id,
+            )
+            return False
+        last_exc: Exception | None = None
+        for attempt in range(1, _MESSAGE_RETRIES + 1):
+            try:
+                channel = self._mumble.channels[channel_id]
+                channel.send_text_message(message)
+                logger.debug(
+                    "Channel message sent user=%s channel_id=%s len=%s",
+                    self._username,
+                    channel_id,
+                    len(message),
+                )
+                return True
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "Channel message attempt %s/%s failed user=%s channel_id=%s: %s",
+                    attempt,
+                    _MESSAGE_RETRIES,
+                    self._username,
+                    channel_id,
+                    exc,
+                )
+                if attempt < _MESSAGE_RETRIES:
+                    time.sleep(_MESSAGE_RETRY_DELAY)
+        logger.error(
+            "Failed to send channel message user=%s channel_id=%s after %s attempts: %s",
+            self._username,
+            channel_id,
+            _MESSAGE_RETRIES,
+            last_exc,
+        )
+        return False
 
-    async def whisper_user(self, session_id: int, message: str) -> None:
-        await asyncio.to_thread(self._whisper_user_sync, session_id, message)
+    async def whisper_user(self, session_id: int, message: str) -> bool:
+        return await asyncio.to_thread(self._whisper_user_sync, session_id, message)
 
-    def _whisper_user_sync(self, session_id: int, message: str) -> None:
-        if self._mumble is None:
-            return
-        try:
-            user = self._mumble.users[session_id]
-            user.send_text_message(message)
-        except Exception:
-            logger.exception("Failed to whisper user=%s to session=%s", self._username, session_id)
+    def _whisper_user_sync(self, session_id: int, message: str) -> bool:
+        if self._mumble is None or not self.is_connected:
+            logger.warning(
+                "Cannot whisper user=%s to session=%s (not connected)",
+                self._username,
+                session_id,
+            )
+            return False
+        last_exc: Exception | None = None
+        for attempt in range(1, _MESSAGE_RETRIES + 1):
+            try:
+                user = self._mumble.users[session_id]
+                user.send_text_message(message)
+                logger.debug(
+                    "Whisper sent user=%s to session=%s len=%s",
+                    self._username,
+                    session_id,
+                    len(message),
+                )
+                return True
+            except KeyError:
+                logger.warning(
+                    "Cannot whisper user=%s to session=%s (user not in channel)",
+                    self._username,
+                    session_id,
+                )
+                return False
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "Whisper attempt %s/%s failed user=%s to session=%s: %s",
+                    attempt,
+                    _MESSAGE_RETRIES,
+                    self._username,
+                    session_id,
+                    exc,
+                )
+                if attempt < _MESSAGE_RETRIES:
+                    time.sleep(_MESSAGE_RETRY_DELAY)
+        logger.error(
+            "Failed to whisper user=%s to session=%s after %s attempts: %s",
+            self._username,
+            session_id,
+            _MESSAGE_RETRIES,
+            last_exc,
+        )
+        return False
 
     async def send_pcm(self, data: bytes) -> None:
         await asyncio.to_thread(self._send_pcm_sync, data)
