@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
-from melody.models import Playlist, Track
+from melody.models import Album, Playlist, Track
 from melody.subsonic.errors import SubsonicError
 
 _NS = "{http://subsonic.org/restapi}"
@@ -68,6 +68,28 @@ def parse_track(element: ET.Element) -> Track:
         artist=_field(element, "artist"),
         album=_field(element, "album"),
         duration=_int_field(element, "duration"),
+    )
+
+
+def parse_album_meta(element: ET.Element) -> Album:
+    return Album(
+        id=_field(element, "id"),
+        name=_field(element, "name"),
+        artist=_field(element, "artist"),
+        tracks=(),
+    )
+
+
+def parse_album(element: ET.Element) -> Album:
+    songs = _findall(element, "song")
+    if not songs:
+        songs = _findall(element, "entry")
+    tracks = tuple(parse_track(s) for s in songs)
+    return Album(
+        id=_field(element, "id"),
+        name=_field(element, "name"),
+        artist=_field(element, "artist"),
+        tracks=tracks,
     )
 
 

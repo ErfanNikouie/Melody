@@ -19,5 +19,9 @@ class PlaylistNotFoundError(SubsonicError):
     """Requested playlist was not found."""
 
 
+class AlbumNotFoundError(SubsonicError):
+    """Requested album was not found."""
+
+
 class StreamError(SubsonicError):
     """Streaming failed."""

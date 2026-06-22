@@ -88,3 +88,29 @@ def test_volume_command(parser: CommandParser) -> None:
     assert show is not None
     assert show.name == "volume"
     assert show.query is None
+
+
+def test_list_command(parser: CommandParser) -> None:
+    cmd = parser.parse("m/list")
+    assert cmd is not None
+    assert cmd.name == "list"
+
+
+def test_album_option(parser: CommandParser) -> None:
+    cmd = parser.parse("m/play -a dark side of the moon")
+    assert cmd is not None
+    assert cmd.options.album is True
+    assert cmd.query == "dark side of the moon"
+
+
+def test_parse_all_multiline(parser: CommandParser) -> None:
+    commands = parser.parse_all("m/play song one\nm/volume 50\nm/list")
+    assert [c.name for c in commands] == ["play", "volume", "list"]
+    assert commands[0].query == "song one"
+    assert commands[1].query == "50"
+
+
+def test_parse_all_skips_non_commands(parser: CommandParser) -> None:
+    commands = parser.parse_all("hello\nm/stop\nworld")
+    assert len(commands) == 1
+    assert commands[0].name == "stop"

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Protocol
 
-from melody.models import Playlist, Track
+from melody.models import Album, Playlist, Track
 
 if TYPE_CHECKING:
     from melody.playback.queue import QueueManager
@@ -16,7 +16,11 @@ class ISubsonicClient(Protocol):
 
     async def search_tracks(self, query: str, limit: int = 20) -> list[Track]: ...
 
+    async def search_albums(self, query: str, limit: int = 20) -> list[Album]: ...
+
     async def search_playlists(self, query: str, limit: int = 20) -> list[Playlist]: ...
+
+    async def get_album(self, album_id: str) -> Album: ...
 
     async def get_playlist(self, playlist_id: str) -> Playlist: ...
 
@@ -43,7 +47,7 @@ class IChannelSession(Protocol):
 
     async def ensure_joined(self) -> None: ...
 
-    async def start_playback(self) -> None: ...
+    async def start_playback(self, *, announce: bool = True) -> None: ...
 
     async def stop_playback(self, *, clear_all: bool = False) -> None: ...
 

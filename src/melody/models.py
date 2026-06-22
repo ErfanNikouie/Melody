@@ -31,6 +31,7 @@ class SearchMode(str, Enum):
 
     TRACK = "track"
     PLAYLIST = "playlist"
+    ALBUM = "album"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,24 @@ class Track:
 
 
 @dataclass(frozen=True, slots=True)
+class Album:
+    id: str
+    name: str
+    artist: str = ""
+    tracks: tuple[Track, ...] = field(default_factory=tuple)
+
+    @property
+    def track_count(self) -> int:
+        return len(self.tracks)
+
+    @property
+    def display_name(self) -> str:
+        if self.artist:
+            return f"{self.artist} — {self.name}"
+        return self.name
+
+
+@dataclass(frozen=True, slots=True)
 class Playlist:
     id: str
     name: str
@@ -63,14 +82,16 @@ class Playlist:
 class QueueItem:
     track: Track
     source_playlist_id: str | None = None
+    source_album_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class SearchMatch:
-    kind: str  # "track" or "playlist"
+    kind: str  # "track", "playlist", or "album"
     score: int
     track: Track | None = None
     playlist: Playlist | None = None
+    album: Album | None = None
 
     @property
     def display_name(self) -> str:
@@ -78,13 +99,26 @@ class SearchMatch:
             return self.track.display_name
         if self.playlist:
             return self.playlist.name
+        if self.album:
+            return self.album.display_name
         return "unknown"
+
+    @property
+    def track_count(self) -> int:
+        if self.track:
+            return 1
+        if self.playlist:
+            return self.playlist.track_count
+        if self.album:
+            return self.album.track_count
+        return 0
 
 
 @dataclass(frozen=True, slots=True)
 class CommandOptions:
     track: bool = False
     playlist: bool = False
+    album: bool = False
     repeat: bool = False
     shuffle: bool = False
 

@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from melody.logging import get_logger
-from melody.models import PlaybackState, QueueItem
+from melody.models import PlaybackState, QueueItem, Track
 from melody.playback.buffer import GlobalBufferPool
 from melody.playback.ffmpeg import FRAME_DURATION_SEC, FFmpegTranscoder
 from melody.playback.pcm_pacer import PcmPacer
@@ -19,6 +19,7 @@ logger = get_logger(__name__)
 SendPcmCallback = Callable[[bytes], Awaitable[None]]
 SendPcmBatchCallback = Callable[[list[bytes]], Awaitable[None]]
 GetBufferSizeCallback = Callable[[], float]
+OnTrackStartCallback = Callable[[Track], Awaitable[None]]
 
 
 class PlaybackEngine:
@@ -34,6 +35,7 @@ class PlaybackEngine:
         send_pcm: SendPcmCallback,
         send_pcm_batch: SendPcmBatchCallback | None = None,
         get_buffer_size: GetBufferSizeCallback,
+        on_track_start: OnTrackStartCallback | None = None,
     ) -> None:
         self._subsonic = subsonic
         self._queue = queue
@@ -42,11 +44,13 @@ class PlaybackEngine:
         self._send_pcm = send_pcm
         self._send_pcm_batch = send_pcm_batch
         self._get_buffer_size = get_buffer_size
+        self._on_track_start = on_track_start
         self._state = PlaybackState.IDLE
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._pause_event = asyncio.Event()
         self._pause_event.set()
+        self._announce_next_track = True
         self._volume = DEFAULT_VOLUME_PERCENT / 100.0
 
     @property
@@ -79,7 +83,7 @@ class PlaybackEngine:
         if self._state == PlaybackState.PAUSED:
             self._state = PlaybackState.PLAYING
 
-    async def play_current(self) -> None:
+    async def play_current(self, *, announce: bool = True) -> None:
         if self._task and not self._task.done():
             self.stop()
             try:
@@ -89,6 +93,7 @@ class PlaybackEngine:
 
         self._stop_event = asyncio.Event()
         self._pause_event.set()
+        self._announce_next_track = announce
         self._task = asyncio.create_task(self._playback_loop())
 
     async def _playback_loop(self) -> None:
@@ -97,6 +102,10 @@ class PlaybackEngine:
             if item is None:
                 self._state = PlaybackState.IDLE
                 return
+
+            if self._announce_next_track and self._on_track_start is not None:
+                await self._on_track_start(item.track)
+            self._announce_next_track = True
 
             try:
                 await self._play_item(item)

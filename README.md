@@ -196,8 +196,9 @@ Commands use a configured prefix:
 | `stop` | Stop playback, clear queue and history |
 | `pause` | Pause playback |
 | `resume` | Resume playback |
-| `next` | Skip to next track |
+| `next` | Skip to next track (announces the new track) |
 | `back` | Return to previous track |
+| `list` | Show the queue (current track highlighted) |
 | `volume [level]` | Show or set playback volume (0–100) |
 | `quit` / `exit` | Stop, leave channel, destroy session |
 
@@ -207,10 +208,23 @@ Commands use a configured prefix:
 |--------|-------------|
 | `-t`, `--track` | Search tracks only (default when no type is specified) |
 | `-p`, `--playlist` | Search playlists only |
-| `-r`, `--repeat` | Enable repeat (track or playlist) |
+| `-a`, `--album` | Search albums and queue every track from the best match |
+| `-r`, `--repeat` | Enable repeat (track, playlist, or album) |
 | `-s`, `--shuffle` | Shuffle upcoming queue |
 
 Options may appear before or after the query.
+
+Melody uses **HTML formatting** in chat replies (colors, bold, emoji). Your Mumble server must allow HTML messages (Murmur `allowhtml=true`, enabled by default).
+
+### Multi-line commands
+
+Send several commands in one message — each line is parsed separately:
+
+```
+m/queue song one
+m/queue song two
+m/list
+```
 
 ### Volume
 
@@ -228,8 +242,10 @@ Volume applies to the channel's player immediately and persists for that session
 ```
 m/play never gonna give you up
 melody/queue --playlist workout
+m/play -a dark side of the moon
 /play -t queen bohemian rhapsody
 m/queue -r -s rock classics
+m/list
 /stop
 m/next
 melody/back

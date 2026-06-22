@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from melody.models import Playlist, SearchMatch, SearchMode, Track
+from melody.models import Album, Playlist, SearchMatch, SearchMode, Track
 from melody.protocols import ISubsonicClient
 
 _TOKEN_RE = re.compile(r"\w+")
@@ -60,6 +60,26 @@ def score_playlist(query: str, playlist: Playlist) -> int:
     return int(40 * overlap)
 
 
+def score_album(query: str, album: Album) -> int:
+    """Score an album against a query. Higher is better."""
+    q = _normalize(query)
+    name = _normalize(album.name)
+    artist = _normalize(album.artist)
+    combined = f"{artist} {name}".strip() if artist else name
+
+    if q == name or q == combined:
+        return 100
+    if combined.startswith(q) or name.startswith(q):
+        return 60
+
+    q_tokens = _tokens(q)
+    if not q_tokens:
+        return 0
+    target_tokens = _tokens(combined)
+    overlap = len(q_tokens & target_tokens) / len(q_tokens)
+    return int(40 * overlap)
+
+
 def rank_tracks(query: str, tracks: list[Track]) -> SearchMatch | None:
     if not tracks:
         return None
@@ -72,6 +92,13 @@ def rank_playlists(query: str, playlists: list[Playlist]) -> SearchMatch | None:
         return None
     best = max(playlists, key=lambda p: score_playlist(query, p))
     return SearchMatch(kind="playlist", score=score_playlist(query, best), playlist=best)
+
+
+def rank_albums(query: str, albums: list[Album]) -> SearchMatch | None:
+    if not albums:
+        return None
+    best = max(albums, key=lambda a: score_album(query, a))
+    return SearchMatch(kind="album", score=score_album(query, best), album=best)
 
 
 def pick_best_match(
@@ -113,6 +140,18 @@ async def resolve_search(
                 kind="playlist",
                 score=match.score,
                 playlist=full,
+            )
+        return match
+
+    if mode == SearchMode.ALBUM:
+        albums = await client.search_albums(query)
+        match = rank_albums(query, albums)
+        if match and match.album:
+            full = await client.get_album(match.album.id)
+            return SearchMatch(
+                kind="album",
+                score=match.score,
+                album=full,
             )
         return match
 

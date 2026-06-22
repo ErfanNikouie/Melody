@@ -4,10 +4,24 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+from melody.commands.messages import (
+    format_need_query,
+    format_no_playable,
+    format_no_results,
+    format_now_playing,
+    format_paused,
+    format_playing,
+    format_queue_list,
+    format_queued,
+    format_resumed,
+    format_stopped,
+    format_volume,
+    format_volume_usage,
+)
 from melody.logging import get_logger
 from melody.models import ParsedCommand, QueueItem, RepeatMode, SearchMatch
-from melody.protocols import IChannelSession
 from melody.playback.volume import parse_volume_command, resolve_volume_percent
+from melody.protocols import IChannelSession
 from melody.services.search import SearchService
 
 logger = get_logger(__name__)
@@ -38,7 +52,7 @@ class CommandHandler:
                 await session.send_message(text)
 
         if name in ("play", "queue") and not command.query:
-            await feedback("Please provide a search query.")
+            await feedback(format_need_query())
             return False
 
         if name == "play":
@@ -53,17 +67,17 @@ class CommandHandler:
 
         if name == "stop":
             await session.stop_playback(clear_all=True)
-            await feedback("Stopped.")
+            await feedback(format_stopped())
             return False
 
         if name == "pause":
             session.pause()
-            await feedback("Paused.")
+            await feedback(format_paused())
             return False
 
         if name == "resume":
             await session.resume()
-            await feedback("Resumed.")
+            await feedback(format_resumed())
             return False
 
         if name == "next":
@@ -72,6 +86,10 @@ class CommandHandler:
 
         if name == "back":
             await session.skip_back()
+            return False
+
+        if name == "list":
+            await self._handle_list(session, feedback)
             return False
 
         if name == "volume":
@@ -91,17 +109,25 @@ class CommandHandler:
     ) -> None:
         volume_cmd = parse_volume_command(command.query)
         if volume_cmd is None:
-            await feedback("Usage: volume [0-100 | up | down | +N | -N]")
+            await feedback(format_volume_usage())
             return
 
         current = session.volume_percent
         if volume_cmd.action == "show":
-            await feedback(f"Volume: {current}%")
+            await feedback(format_volume(current))
             return
 
         new_level = resolve_volume_percent(current, volume_cmd)
         session.set_volume_percent(new_level)
-        await feedback(f"Volume: {new_level}%")
+        await feedback(format_volume(new_level))
+
+    async def _handle_list(
+        self,
+        session: IChannelSession,
+        feedback: NotifyCallback,
+    ) -> None:
+        queue = session.queue
+        await feedback(format_queue_list(queue.current, queue.upcoming))
 
     async def _handle_play(
         self,
@@ -113,28 +139,19 @@ class CommandHandler:
 
         match = await self._search.resolve(command.query or "", command.options)
         if match is None:
-            await feedback("No results found.")
+            await feedback(format_no_results())
             return
 
-        items, playlist_id, source_tracks = self._match_to_queue_items(match)
+        items, collection = self._match_to_queue_items(match)
         if not items:
-            await feedback("No playable tracks found.")
+            await feedback(format_no_playable())
             return
 
-        if command.options.repeat:
-            session.queue.set_repeat_mode(
-                RepeatMode.ALL if match.kind == "playlist" else RepeatMode.TRACK
-            )
-        if command.options.shuffle:
-            session.queue.set_shuffle(True)
+        self._apply_queue_options(session, command, match)
 
-        session.queue.play_now(
-            items,
-            source_playlist_id=playlist_id,
-            source_tracks=source_tracks,
-        )
-        await session.start_playback()
-        await feedback(f"Playing: {match.display_name}")
+        session.queue.play_now(items, **collection)
+        await session.start_playback(announce=False)
+        await feedback(format_playing(match.display_name, match.track_count))
 
     async def _handle_queue(
         self,
@@ -144,44 +161,62 @@ class CommandHandler:
     ) -> None:
         match = await self._search.resolve(command.query or "", command.options)
         if match is None:
-            await feedback("No results found.")
+            await feedback(format_no_results())
             return
 
-        items, playlist_id, source_tracks = self._match_to_queue_items(match)
+        items, collection = self._match_to_queue_items(match)
         if not items:
-            await feedback("No playable tracks found.")
+            await feedback(format_no_playable())
             return
 
+        self._apply_queue_options(session, command, match)
+
+        was_idle = session.queue.is_idle
+        session.queue.enqueue(items, **collection)
+        if was_idle:
+            await session.start_playback(announce=False)
+            await feedback(format_playing(match.display_name, match.track_count))
+        else:
+            await feedback(format_queued(match.display_name, match.track_count))
+
+    def _apply_queue_options(
+        self,
+        session: IChannelSession,
+        command: ParsedCommand,
+        match: SearchMatch,
+    ) -> None:
         if command.options.repeat:
             session.queue.set_repeat_mode(
-                RepeatMode.ALL if match.kind == "playlist" else RepeatMode.TRACK
+                RepeatMode.ALL if match.kind in ("playlist", "album") else RepeatMode.TRACK
             )
         if command.options.shuffle:
             session.queue.set_shuffle(True)
 
-        was_idle = session.queue.is_idle
-        session.queue.enqueue(
-            items,
-            source_playlist_id=playlist_id,
-            source_tracks=source_tracks,
-        )
-        if was_idle:
-            await session.start_playback()
-        await feedback(f"Queued: {match.display_name}")
-
     def _match_to_queue_items(
         self,
         match: SearchMatch,
-    ) -> tuple[list[QueueItem], str | None, list]:
+    ) -> tuple[list[QueueItem], dict[str, object]]:
         if match.track:
             if not match.track.id:
-                return [], None, []
-            return [QueueItem(track=match.track)], None, []
+                return [], {}
+            return [QueueItem(track=match.track)], {}
 
         if match.playlist and match.playlist.tracks:
             playlist_id = match.playlist.id
             tracks = [t for t in match.playlist.tracks if t.id]
             items = [QueueItem(track=t, source_playlist_id=playlist_id) for t in tracks]
-            return items, playlist_id, tracks
+            return items, {
+                "source_playlist_id": playlist_id,
+                "source_tracks": tracks,
+            }
 
-        return [], None, []
+        if match.album and match.album.tracks:
+            album_id = match.album.id
+            tracks = [t for t in match.album.tracks if t.id]
+            items = [QueueItem(track=t, source_album_id=album_id) for t in tracks]
+            return items, {
+                "source_album_id": album_id,
+                "source_album_tracks": tracks,
+            }
+
+        return [], {}

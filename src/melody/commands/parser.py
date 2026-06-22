@@ -13,6 +13,7 @@ KNOWN_COMMANDS = frozenset(
         "resume",
         "next",
         "back",
+        "list",
         "volume",
         "quit",
         "exit",
@@ -24,6 +25,8 @@ OPTION_MAP: dict[str, str] = {
     "--track": "track",
     "-p": "playlist",
     "--playlist": "playlist",
+    "-a": "album",
+    "--album": "album",
     "-r": "repeat",
     "--repeat": "repeat",
     "-s": "shuffle",
@@ -62,6 +65,15 @@ class CommandParser:
 
         return ParsedCommand(name=command_name, options=options, query=query)
 
+    def parse_all(self, message: str) -> list[ParsedCommand]:
+        """Parse each non-empty line as a separate command."""
+        commands: list[ParsedCommand] = []
+        for line in message.splitlines():
+            command = self.parse(line)
+            if command is not None:
+                commands.append(command)
+        return commands
+
     def _match_prefix(self, text: str) -> str | None:
         lower = text.lower()
         for prefix in self._prefixes:
@@ -70,7 +82,13 @@ class CommandParser:
         return None
 
     def _extract_options(self, tokens: list[str]) -> tuple[CommandOptions, list[str]]:
-        flags = {"track": False, "playlist": False, "repeat": False, "shuffle": False}
+        flags = {
+            "track": False,
+            "playlist": False,
+            "album": False,
+            "repeat": False,
+            "shuffle": False,
+        }
         query_tokens: list[str] = []
 
         for token in tokens:

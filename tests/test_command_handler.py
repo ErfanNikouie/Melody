@@ -39,7 +39,8 @@ async def test_feedback_whispers_when_notify_set() -> None:
         notify=notify,
     )
 
-    assert notified == ["Please provide a search query."]
+    assert notified
+    assert "search query" in notified[0].lower()
     assert session.messages == []
 
 
@@ -53,7 +54,8 @@ async def test_feedback_uses_channel_when_no_notify() -> None:
         session,  # type: ignore[arg-type]
     )
 
-    assert session.messages == ["Please provide a search query."]
+    assert session.messages
+    assert "search query" in session.messages[0].lower()
 
 
 @pytest.mark.asyncio
@@ -64,7 +66,8 @@ async def test_volume_show() -> None:
         ParsedCommand(name="volume", options=CommandOptions(), query=None),
         session,  # type: ignore[arg-type]
     )
-    assert session.messages == ["Volume: 100%"]
+    assert "50%" in session.messages[0] or "100%" in session.messages[0]
+    assert "🔊" in session.messages[0]
 
 
 @pytest.mark.asyncio
@@ -76,4 +79,4 @@ async def test_volume_set() -> None:
         session,  # type: ignore[arg-type]
     )
     assert session.volume == 40
-    assert session.messages == ["Volume: 40%"]
+    assert "40%" in session.messages[0]

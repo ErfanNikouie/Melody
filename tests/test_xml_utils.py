@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
-from melody.subsonic.xml_utils import parse_playlist, parse_playlist_meta, parse_track
+from melody.subsonic.xml_utils import (
+    parse_album,
+    parse_album_meta,
+    parse_playlist,
+    parse_playlist_meta,
+    parse_track,
+)
 
 
 def test_parse_track_reads_subsonic_attributes() -> None:
@@ -35,6 +41,29 @@ def test_parse_playlist_meta_reads_attributes() -> None:
     playlist = parse_playlist_meta(element)
     assert playlist.id == "pl1"
     assert playlist.name == "My Playlist"
+
+
+def test_parse_album_meta_reads_attributes() -> None:
+    element = ET.fromstring('<album id="al1" name="Abbey Road" artist="The Beatles" />')
+    album = parse_album_meta(element)
+    assert album.id == "al1"
+    assert album.name == "Abbey Road"
+    assert album.artist == "The Beatles"
+
+
+def test_parse_album_reads_songs() -> None:
+    element = ET.fromstring(
+        """
+        <album id="al1" name="Album" artist="Artist">
+          <song id="s1" title="One" artist="Artist" duration="100" />
+          <song id="s2" title="Two" artist="Artist" duration="200" />
+        </album>
+        """
+    )
+    album = parse_album(element)
+    assert album.id == "al1"
+    assert len(album.tracks) == 2
+    assert album.tracks[0].id == "s1"
 
 
 def test_parse_playlist_reads_entry_attributes() -> None:

@@ -12,8 +12,9 @@ from urllib.parse import urlencode
 import aiohttp
 
 from melody.logging import get_logger
-from melody.models import Playlist, Track
+from melody.models import Album, Playlist, Track
 from melody.subsonic.errors import (
+    AlbumNotFoundError,
     PlaylistNotFoundError,
     StreamError,
     SubsonicAuthError,
@@ -24,6 +25,8 @@ from melody.protocols import ISubsonicClient
 from melody.subsonic.xml_utils import (
     _findall,
     check_response_status,
+    parse_album,
+    parse_album_meta,
     parse_playlist,
     parse_playlist_meta,
     parse_track,
@@ -111,6 +114,18 @@ class SubsonicClient(ISubsonicClient):
             return []
         return [parse_track(e) for e in _findall(result, "song")]
 
+    async def search_albums(self, query: str, limit: int = 20) -> list[Album]:
+        root = await self._fetch_xml(
+            "search3.view",
+            {"query": query, "songCount": 0, "albumCount": limit, "artistCount": 0},
+        )
+        result = root.find(".//{http://subsonic.org/restapi}searchResult3")
+        if result is None:
+            result = root.find(".//searchResult3")
+        if result is None:
+            return []
+        return [parse_album_meta(e) for e in _findall(result, "album")]
+
     async def search_playlists(self, query: str, limit: int = 20) -> list[Playlist]:
         root = await self._fetch_xml("getPlaylists.view")
         playlists_el = root.find(".//{http://subsonic.org/restapi}playlists")
@@ -141,6 +156,19 @@ class SubsonicClient(ISubsonicClient):
         if playlist_el is None:
             raise PlaylistNotFoundError(f"Playlist {playlist_id} not found")
         return parse_playlist(playlist_el)
+
+    async def get_album(self, album_id: str) -> Album:
+        try:
+            root = await self._fetch_xml("getAlbum.view", {"id": album_id})
+        except SubsonicError as exc:
+            raise AlbumNotFoundError(str(exc)) from exc
+
+        album_el = root.find(".//{http://subsonic.org/restapi}album")
+        if album_el is None:
+            album_el = root.find(".//album")
+        if album_el is None:
+            raise AlbumNotFoundError(f"Album {album_id} not found")
+        return parse_album(album_el)
 
     async def get_song(self, song_id: str) -> Track:
         try:

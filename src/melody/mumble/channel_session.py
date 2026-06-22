@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
+from melody.commands.messages import format_no_previous, format_now_playing, format_queue_end
 from melody.logging import get_logger
 from melody.playback.buffer import GlobalBufferPool
 from melody.playback.engine import PlaybackEngine
@@ -65,7 +66,11 @@ class ChannelSession:
             send_pcm=send_pcm,
             send_pcm_batch=send_pcm_batch,
             get_buffer_size=get_buffer_size,
+            on_track_start=self._announce_now_playing,
         )
+
+    async def _announce_now_playing(self, track: Track) -> None:
+        await self.send_message(format_now_playing(track))
 
     async def send_message(self, message: str) -> None:
         await self._send_message(message)
@@ -82,11 +87,11 @@ class ChannelSession:
         self._joined = True
         self._cancel_grace_timer()
 
-    async def start_playback(self) -> None:
+    async def start_playback(self, *, announce: bool = True) -> None:
         await self.ensure_joined()
         if not await self._wait_for_audio_encoder():
             logger.error("Mumble Opus encoder not ready channel_id=%s", self.channel_id)
-        await self.engine.play_current()
+        await self.engine.play_current(announce=announce)
 
     async def stop_playback(self, *, clear_all: bool = False) -> None:
         self.engine.stop()
@@ -101,25 +106,25 @@ class ChannelSession:
     async def resume(self) -> None:
         self.engine.resume()
         if self.queue.current and self.engine.state.value in ("idle", "paused"):
-            await self.engine.play_current()
+            await self.engine.play_current(announce=False)
 
     async def skip_next(self) -> None:
         self.engine.stop()
         nxt = self.queue.advance()
         if nxt:
-            await self.send_message(f"Next: {nxt.track.display_name}")
-            await self.engine.play_current()
+            await self.send_message(format_now_playing(nxt.track))
+            await self.engine.play_current(announce=False)
         else:
-            await self.send_message("Queue empty.")
+            await self.send_message(format_queue_end())
 
     async def skip_back(self) -> None:
         self.engine.stop()
         prev = self.queue.go_back()
         if prev:
-            await self.send_message(f"Back: {prev.track.display_name}")
-            await self.engine.play_current()
+            await self.send_message(format_now_playing(prev.track))
+            await self.engine.play_current(announce=False)
         else:
-            await self.send_message("No previous track.")
+            await self.send_message(format_no_previous())
 
     @property
     def volume_percent(self) -> int:

@@ -64,8 +64,8 @@ class MumbleOrchestrator:
         self._player_queues.pop(channel_id, None)
 
     async def _on_coordinator_text(self, message: ParsedTextMessage) -> None:
-        command = self._parser.parse(message.message)
-        if command is None:
+        commands = self._parser.parse_all(message.message)
+        if not commands:
             return
 
         try:
@@ -78,11 +78,12 @@ class MumbleOrchestrator:
         notify: NotifyCallback | None = None
         if message.is_private:
             notify = lambda text, sid=message.sender_session: self._coordinator.whisper(sid, text)
-        await self._dispatch_command(
-            command,
-            player,
-            notify=notify,
-        )
+        for command in commands:
+            await self._dispatch_command(
+                command,
+                player,
+                notify=notify,
+            )
 
     def _ensure_player_listener(self, player: PlayerBot) -> None:
         if player.channel_id in self._player_queues:
@@ -107,8 +108,8 @@ class MumbleOrchestrator:
             if not message.is_private:
                 # Channel commands to Melody are handled by the coordinator.
                 continue
-            command = self._parser.parse(message.message)
-            if command is None:
+            commands = self._parser.parse_all(message.message)
+            if not commands:
                 continue
             player = await self._pool.get(channel_id)
             if player is None:
@@ -118,7 +119,8 @@ class MumbleOrchestrator:
                 notify = lambda text, sid=message.sender_session, p=player: p.connection.whisper_user(
                     sid, text
                 )
-            await self._dispatch_command(command, player, notify=notify)
+            for command in commands:
+                await self._dispatch_command(command, player, notify=notify)
 
     async def _dispatch_command(
         self,
