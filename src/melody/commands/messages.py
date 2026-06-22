@@ -154,44 +154,60 @@ def format_no_previous() -> str:
 
 
 def format_queue_list(
-    current: QueueItem | None,
-    upcoming: tuple[QueueItem, ...],
     *,
+    history: tuple[QueueItem, ...] = (),
+    current: QueueItem | None = None,
+    upcoming: tuple[QueueItem, ...] = (),
     status: PlaybackStatus | None = None,
-    max_items: int = 15,
 ) -> str:
-    if current is None and not upcoming:
+    if current is None and not upcoming and not history:
         return format_queue_empty()
 
+    played = len(history)
+    now = 1 if current is not None else 0
+    next_count = len(upcoming)
+    total = played + now + next_count
+
     lines: list[str] = []
-    total = (1 if current else 0) + len(upcoming)
     lines.append(
         f"🎵 <b>Queue</b> <span style=\"color:{_ACCENT_COLOR}\">"
-        f"({total} track{'s' if total != 1 else ''})</span>"
+        f"({total} track{'s' if total != 1 else ''}"
     )
+    if played:
+        lines[-1] += f", {played} played"
+    lines[-1] += ")</span>"
     lines.append("─" * 24)
 
-    if status is not None and status.track is not None and status.is_active:
-        lines.append(format_state_label(status.state))
+    index = 1
+    for item in history:
         lines.append(
-            f'<span style="color:{_NOW_PLAYING_COLOR}"><b>{format_track_line(status.track)}</b></span>'
+            f'<span style="color:{_ACCENT_COLOR}">✓ {index}.</span> '
+            f"{format_track_line(item.track)}"
         )
-        lines.append(format_progress_line(status.elapsed_seconds, status.total_seconds))
-        lines.append("─" * 24)
-    elif current is not None:
-        lines.append(
-            f"▶️ <span style=\"color:{_NOW_PLAYING_COLOR}\"><b>{format_track_line(current.track)}</b></span>"
-        )
+        index += 1
 
-    shown = 0
-    for index, item in enumerate(upcoming, start=1):
-        if shown >= max_items:
-            remaining = len(upcoming) - shown
-            lines.append(f"<span style=\"color:{_ACCENT_COLOR}\">… and {remaining} more</span>")
-            break
-        prefix = f"{index}."
-        lines.append(f"<span style=\"color:{_ACCENT_COLOR}\">{prefix}</span> {format_track_line(item.track)}")
-        shown += 1
+    if current is not None:
+        if status is not None and status.track is not None and status.is_active:
+            lines.append(format_state_label(status.state))
+            lines.append(
+                f'<span style="color:{_ACCENT_COLOR}">{index}.</span> '
+                f'<span style="color:{_NOW_PLAYING_COLOR}"><b>{format_track_line(status.track)}</b></span>'
+            )
+            lines.append(format_progress_line(status.elapsed_seconds, status.total_seconds))
+        else:
+            lines.append(
+                f'<span style="color:{_ACCENT_COLOR}">{index}.</span> '
+                f'▶️ <span style="color:{_NOW_PLAYING_COLOR}"><b>{format_track_line(current.track)}</b></span>'
+            )
+        index += 1
+        if upcoming:
+            lines.append("─" * 24)
+
+    for item in upcoming:
+        lines.append(
+            f'<span style="color:{_ACCENT_COLOR}">{index}.</span> {format_track_line(item.track)}'
+        )
+        index += 1
 
     return "<br/>".join(lines)
 

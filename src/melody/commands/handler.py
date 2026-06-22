@@ -142,8 +142,9 @@ class CommandHandler:
         queue = session.queue
         await feedback(
             format_queue_list(
-                queue.current,
-                queue.upcoming,
+                history=queue.history,
+                current=queue.current,
+                upcoming=queue.upcoming,
                 status=session.playback_status,
             )
         )

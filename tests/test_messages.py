@@ -49,8 +49,8 @@ def test_format_queue_list_with_status() -> None:
         total_seconds=120,
     )
     text = format_queue_list(
-        QueueItem(track=track),
-        (QueueItem(track=Track(id="2", title="Next", artist="B")),),
+        current=QueueItem(track=track),
+        upcoming=(QueueItem(track=Track(id="2", title="Next", artist="B")),),
         status=status,
     )
     assert "Paused" in text
@@ -77,11 +77,34 @@ def test_format_queue_list_highlights_current() -> None:
     upcoming = (
         QueueItem(track=Track(id="2", title="Next", artist="B")),
     )
-    text = format_queue_list(current, upcoming)
+    text = format_queue_list(current=current, upcoming=upcoming)
     assert "▶️" in text
     assert "Now" in text
     assert "Next" in text
     assert "1." in text
+    assert "2." in text
+
+
+def test_format_queue_list_shows_history_and_full_queue() -> None:
+    history = (
+        QueueItem(track=Track(id="0", title="Past", artist="Z")),
+        QueueItem(track=Track(id="1", title="Earlier", artist="Y")),
+    )
+    current = QueueItem(track=Track(id="2", title="Now", artist="A"))
+    upcoming = tuple(
+        QueueItem(track=Track(id=str(i), title=f"Track {i}", artist="B"))
+        for i in range(3, 20)
+    )
+    text = format_queue_list(history=history, current=current, upcoming=upcoming)
+    assert "2 played" in text
+    assert "Past" in text
+    assert "Earlier" in text
+    assert "Now" in text
+    assert "Track 19" in text
+    assert "… and" not in text
+    assert "✓ 1." in text
+    assert "✓ 2." in text
+    assert "3." in text
 
 
 def test_format_volume_bar() -> None:
