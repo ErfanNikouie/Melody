@@ -93,7 +93,7 @@ def test_rank_playlists_exact() -> None:
     assert match is not None
     assert match.playlist is not None
     assert match.playlist.id == "p2"
-    assert match.score == 100
+    assert match.score == 85  # 100% relevance × 85% weight
 
 
 def test_rank_albums_exact() -> None:
@@ -185,3 +185,38 @@ async def test_resolve_search_defaults_to_track() -> None:
     assert match.kind == "track"
     assert match.track is not None
     assert match.track.id == "1"
+
+
+def test_popularity_breaks_relevance_tie() -> None:
+    tracks = [
+        Track(id="1", title="Hit Song", artist="A", play_count=5),
+        Track(id="2", title="Hit Song", artist="B", play_count=8000),
+    ]
+    match = rank_tracks("hit song", tracks)
+    assert match is not None
+    assert match.track is not None
+    assert match.track.id == "2"
+
+
+def test_relevance_beats_popularity() -> None:
+    tracks = [
+        Track(id="1", title="Bohemian Rhapsody", artist="Queen", play_count=0),
+        Track(id="2", title="Random", artist="Obscure", play_count=999_999),
+    ]
+    match = rank_tracks("bohemian rhapsody", tracks)
+    assert match is not None
+    assert match.track is not None
+    assert match.track.id == "1"
+
+
+def test_combined_score_uses_weights() -> None:
+    from melody.models import SearchWeights
+    from melody.subsonic.search import combined_score
+
+    default = SearchWeights()
+    assert combined_score(100, 0.0, default) == 85
+    assert combined_score(100, 1.0, default) == 100
+
+    pop_heavy = SearchWeights(relevance_percent=50, popularity_percent=50)
+    assert combined_score(100, 1.0, pop_heavy) == 100
+    assert combined_score(80, 0.0, pop_heavy) == 40

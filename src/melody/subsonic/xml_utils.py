@@ -68,6 +68,8 @@ def parse_track(element: ET.Element) -> Track:
         artist=_field(element, "artist"),
         album=_field(element, "album"),
         duration=_int_field(element, "duration"),
+        play_count=_int_field(element, "playCount"),
+        user_rating=_int_field(element, "userRating"),
     )
 
 
@@ -77,6 +79,9 @@ def parse_album_meta(element: ET.Element) -> Album:
         name=_field(element, "name"),
         artist=_field(element, "artist"),
         tracks=(),
+        play_count=_int_field(element, "playCount"),
+        song_count=_int_field(element, "songCount"),
+        user_rating=_int_field(element, "userRating"),
     )
 
 
@@ -90,6 +95,9 @@ def parse_album(element: ET.Element) -> Album:
         name=_field(element, "name"),
         artist=_field(element, "artist"),
         tracks=tracks,
+        play_count=_int_field(element, "playCount"),
+        song_count=_int_field(element, "songCount") or len(tracks),
+        user_rating=_int_field(element, "userRating"),
     )
 
 
@@ -98,6 +106,7 @@ def parse_playlist_meta(element: ET.Element) -> Playlist:
         id=_field(element, "id"),
         name=_field(element, "name"),
         tracks=(),
+        song_count=_int_field(element, "songCount"),
     )
 
 

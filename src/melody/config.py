@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from melody.models import PlayerMode
@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     audio_buffer_max_mb: int = Field(default=256, alias="AUDIO_BUFFER_MAX_MB")
     audio_buffer_start_seconds: float = Field(default=3.0, alias="AUDIO_BUFFER_START_SECONDS")
 
+    # Search ranking (must sum to 100)
+    search_relevance_percent: int = Field(default=85, alias="SEARCH_RELEVANCE_PERCENT")
+    search_popularity_percent: int = Field(default=15, alias="SEARCH_POPULARITY_PERCENT")
+
     # Logging
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
@@ -46,6 +50,23 @@ class Settings(BaseSettings):
     player_username_prefix: str = Field(default="MelodyPlayer", alias="PLAYER_USERNAME_PREFIX")
     player_password: str = Field(default="", alias="PLAYER_PASSWORD")
     coordinator_accept_root_messages: bool = Field(default=True, alias="COORDINATOR_ACCEPT_ROOT_MESSAGES")
+
+    @field_validator("search_relevance_percent", "search_popularity_percent")
+    @classmethod
+    def validate_search_percent_range(cls, value: int) -> int:
+        if not 0 <= value <= 100:
+            raise ValueError("Search ranking percentages must be between 0 and 100")
+        return value
+
+    @model_validator(mode="after")
+    def validate_search_percents_sum(self) -> Settings:
+        total = self.search_relevance_percent + self.search_popularity_percent
+        if total != 100:
+            raise ValueError(
+                "SEARCH_RELEVANCE_PERCENT and SEARCH_POPULARITY_PERCENT must sum to 100 "
+                f"(got {self.search_relevance_percent} + {self.search_popularity_percent} = {total})"
+            )
+        return self
 
     @field_validator("player_mode")
     @classmethod

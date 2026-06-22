@@ -94,13 +94,13 @@ No layer imports from Mumble or App. Commands talk to sessions through `IChannel
 1. HTTP stream from Subsonic `stream.view` (chunked, not fully downloaded)
 2. Rolling buffer until `AUDIO_BUFFER_START_SECONDS` of audio is available
 3. FFmpeg transcodes encoded audio → s16le 48 kHz stereo PCM
-4. PCM frames sent to Mumble via pymumble
+4. PCM frames sent to Mumble via [PyMumble](https://github.com/azlux/pymumble)
 
 ## Supported Subsonic backends
 
-Melody uses the standard Open Subsonic REST API and works with any compatible server:
+Melody uses the standard [Subsonic REST API](https://www.subsonic.org/pages/api.jsp) and works with any compatible server:
 
-- [Navidrome](https://www.navidrome.org/) (primary target, including behind Octo Fiesta)
+- [Navidrome](https://www.navidrome.org/) (primary target, including behind [Octo Fiesta](https://github.com/V1ck3s/octo-fiesta))
 - [Airsonic-Advanced](https://github.com/airsonic-advanced/airsonic-advanced)
 - [Gonic](https://github.com/sentriz/gonic)
 - [Jellyfin](https://jellyfin.org/) (Subsonic plugin)
@@ -112,7 +112,7 @@ No Navidrome-specific code is used.
 
 - Python 3.12+
 - FFmpeg
-- libopus (required by pymumble for audio encoding)
+- libopus (required by [PyMumble](https://github.com/azlux/pymumble) for audio encoding)
 
 ## Docker deployment
 
@@ -181,7 +181,11 @@ pytest
 | `DISCONNECT_GRACE_PERIOD` | No | `300` | Seconds before leaving empty channels |
 | `AUDIO_BUFFER_MAX_MB` | No | `256` | Max buffer size across all streams |
 | `AUDIO_BUFFER_START_SECONDS` | No | `3` | Min buffer before playback starts |
+| `SEARCH_RELEVANCE_PERCENT` | No | `85` | Weight for title/artist match (0–100) |
+| `SEARCH_POPULARITY_PERCENT` | No | `15` | Weight for play count / rating (0–100) |
 | `LOG_LEVEL` | No | `INFO` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+
+`SEARCH_RELEVANCE_PERCENT` and `SEARCH_POPULARITY_PERCENT` **must sum to 100**.
 
 ## Commands
 
@@ -200,6 +204,7 @@ Commands use a configured prefix:
 | `back` | Return to previous track |
 | `list` | Show the queue (current track highlighted) |
 | `volume [level]` | Show or set playback volume (0–100) |
+| `help` | Show all commands and usage |
 | `quit` / `exit` | Stop, leave channel, destroy session |
 
 ### Options
@@ -215,6 +220,17 @@ Commands use a configured prefix:
 Options may appear before or after the query.
 
 Melody uses **HTML formatting** in chat replies (colors, bold, emoji). Your Mumble server must allow HTML messages (Murmur `allowhtml=true`, enabled by default).
+
+### Search ranking
+
+Results for `play` and `queue` combine **relevance** (title/artist/album match) and **popularity** (`playCount` / `userRating` from your Subsonic server, when available). Tune the balance in `.env`:
+
+```env
+SEARCH_RELEVANCE_PERCENT=85
+SEARCH_POPULARITY_PERCENT=15
+```
+
+Both values must sum to **100**. Higher relevance favors exact matches; higher popularity favors tracks and albums you play more often.
 
 ### Multi-line commands
 
@@ -246,6 +262,7 @@ m/play -a dark side of the moon
 /play -t queen bohemian rhapsody
 m/queue -r -s rock classics
 m/list
+m/help
 /stop
 m/next
 melody/back
@@ -307,6 +324,18 @@ When no human users remain in a channel, the assigned `MelodyPlayer` starts a gr
 ### After a kick or disconnect
 
 Melody and MelodyPlayer connections reconnect automatically (`reconnect=True` in pymumble). If kicked, re-register the bot user on the server if required — no container restart needed.
+
+## References
+
+Melody is built on these projects and protocols:
+
+| Project | Role in Melody |
+|---------|----------------|
+| [Mumble](https://www.mumble.info/) | Voice chat platform Melody streams audio into ([Murmur](https://wiki.mumble.info/wiki/Murmur) server) |
+| [PyMumble](https://github.com/azlux/pymumble) | Python Mumble client library (`pymumble_py3`) — connections, voice transmission, chat |
+| [Subsonic API](https://www.subsonic.org/pages/api.jsp) | REST API for search, streaming, and library access ([OpenSubsonic](https://opensubsonic.netlify.app/) extensions) |
+| [Navidrome](https://www.navidrome.org/) | Self-hosted music server — primary Subsonic-compatible backend target |
+| [Octo Fiesta](https://github.com/V1ck3s/octo-fiesta) | Subsonic API proxy in front of Navidrome — on-demand streaming-provider tracks |
 
 ## License
 

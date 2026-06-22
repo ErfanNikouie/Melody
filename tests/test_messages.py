@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from melody.commands.messages import (
+    format_help,
     format_now_playing,
     format_playing,
     format_queue_list,
@@ -41,3 +42,11 @@ def test_format_volume_bar() -> None:
     text = format_volume(50)
     assert "50%" in text
     assert "█" in text
+
+
+def test_format_help_lists_commands() -> None:
+    text = format_help("m/")
+    assert "play" in text
+    assert "help" not in text.lower() or "Commands" in text
+    assert "m/play" in text
+    assert "-a" in text

@@ -114,3 +114,10 @@ def test_parse_all_skips_non_commands(parser: CommandParser) -> None:
     commands = parser.parse_all("hello\nm/stop\nworld")
     assert len(commands) == 1
     assert commands[0].name == "stop"
+
+
+def test_help_command(parser: CommandParser) -> None:
+    cmd = parser.parse("m/help")
+    assert cmd is not None
+    assert cmd.name == "help"
+    assert cmd.query is None

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from melody.commands.messages import (
+    format_help,
     format_need_query,
     format_no_playable,
     format_no_results,
@@ -32,8 +33,9 @@ NotifyCallback = Callable[[str], Awaitable[None]]
 class CommandHandler:
     """Executes bot commands for a channel session."""
 
-    def __init__(self, search: SearchService) -> None:
+    def __init__(self, search: SearchService, *, command_prefix: str = "m/") -> None:
         self._search = search
+        self._command_prefix = command_prefix
 
     async def handle(
         self,
@@ -94,6 +96,10 @@ class CommandHandler:
 
         if name == "volume":
             await self._handle_volume(session, command, feedback)
+            return False
+
+        if name == "help":
+            await feedback(format_help(self._command_prefix))
             return False
 
         if name in ("quit", "exit"):

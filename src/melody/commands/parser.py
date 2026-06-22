@@ -15,6 +15,7 @@ KNOWN_COMMANDS = frozenset(
         "back",
         "list",
         "volume",
+        "help",
         "quit",
         "exit",
     }

@@ -80,3 +80,16 @@ async def test_volume_set() -> None:
     )
     assert session.volume == 40
     assert "40%" in session.messages[0]
+
+
+@pytest.mark.asyncio
+async def test_help_command() -> None:
+    session = _Session()
+    handler = CommandHandler(search=object(), command_prefix="m/")  # type: ignore[arg-type]
+    await handler.handle(
+        ParsedCommand(name="help", options=CommandOptions(), query=None),
+        session,  # type: ignore[arg-type]
+    )
+    assert session.messages
+    assert "play" in session.messages[0].lower()
+    assert "m/play" in session.messages[0]

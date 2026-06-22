@@ -119,3 +119,33 @@ def format_queue_list(
 def _volume_bar(level: int) -> str:
     filled = max(0, min(10, round(level / 10)))
     return "█" * filled + "░" * (10 - filled)
+
+
+def format_help(prefix: str = "m/") -> str:
+    """Full command reference for the help command."""
+    p = _e(prefix)
+    lines = [
+        "📖 <b>Melody — Commands</b>",
+        f'<span style="color:{_ACCENT_COLOR}">Prefix: <code>{p}</code> · one command per line</span>',
+        "─" * 28,
+        "<b>Playback</b>",
+        f"<code>{p}play [opts] query</code> — search &amp; play now",
+        f"<code>{p}queue [opts] query</code> — search &amp; add to queue",
+        f"<code>{p}stop</code> — stop &amp; clear queue",
+        f"<code>{p}pause</code> / <code>{p}resume</code>",
+        f"<code>{p}next</code> / <code>{p}back</code> — skip tracks",
+        f"<code>{p}list</code> — show queue",
+        f"<code>{p}volume [0-100|up|down]</code>",
+        f"<code>{p}quit</code> — leave channel",
+        "─" * 28,
+        "<b>Search options</b> <span style=\"color:{0}\">(play / queue)</span>".format(_ACCENT_COLOR),
+        "<code>-t</code> tracks (default) · <code>-a</code> album · <code>-p</code> playlist",
+        "<code>-r</code> repeat · <code>-s</code> shuffle",
+        "─" * 28,
+        "<b>Examples</b>",
+        f"<code>{p}play never gonna give you up</code>",
+        f"<code>{p}play -a dark side of the moon</code>",
+        f"<code>{p}queue -p workout -r -s</code>",
+        f"<code>{p}volume 50</code>",
+    ]
+    return "<br/>".join(lines)

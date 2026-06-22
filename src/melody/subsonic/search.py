@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import math
 import re
+from typing import Protocol
 
-from melody.models import Album, Playlist, SearchMatch, SearchMode, Track
+from melody.models import Album, Playlist, SearchMatch, SearchMode, SearchWeights, Track
 from melody.protocols import ISubsonicClient
 
 _TOKEN_RE = re.compile(r"\w+")
+
+DEFAULT_SEARCH_WEIGHTS = SearchWeights()
+
+
+class _HasPopularity(Protocol):
+    play_count: int
+    user_rating: int
 
 
 def _normalize(text: str) -> str:
@@ -18,8 +27,8 @@ def _tokens(text: str) -> set[str]:
     return set(_TOKEN_RE.findall(text.lower()))
 
 
-def score_track(query: str, track: Track) -> int:
-    """Score a track against a query. Higher is better."""
+def relevance_score_track(query: str, track: Track) -> int:
+    """Score a track against a query (0–100). Higher is better."""
     q = _normalize(query)
     title = _normalize(track.title)
     artist = _normalize(track.artist)
@@ -42,8 +51,8 @@ def score_track(query: str, track: Track) -> int:
     return int(40 * overlap)
 
 
-def score_playlist(query: str, playlist: Playlist) -> int:
-    """Score a playlist against a query. Higher is better."""
+def relevance_score_playlist(query: str, playlist: Playlist) -> int:
+    """Score a playlist against a query (0–100)."""
     q = _normalize(query)
     name = _normalize(playlist.name)
 
@@ -60,8 +69,8 @@ def score_playlist(query: str, playlist: Playlist) -> int:
     return int(40 * overlap)
 
 
-def score_album(query: str, album: Album) -> int:
-    """Score an album against a query. Higher is better."""
+def relevance_score_album(query: str, album: Album) -> int:
+    """Score an album against a query (0–100)."""
     q = _normalize(query)
     name = _normalize(album.name)
     artist = _normalize(album.artist)
@@ -80,25 +89,105 @@ def score_album(query: str, album: Album) -> int:
     return int(40 * overlap)
 
 
-def rank_tracks(query: str, tracks: list[Track]) -> SearchMatch | None:
+def popularity_norm_play_count(play_count: int, max_play_count: int) -> float:
+    """Log-scaled play count in 0.0–1.0."""
+    if play_count <= 0 or max_play_count <= 0:
+        return 0.0
+    return math.log1p(play_count) / math.log1p(max_play_count)
+
+
+def popularity_norm_rating(user_rating: int) -> float:
+    """Subsonic user rating (1–5) in 0.0–1.0."""
+    if user_rating <= 0:
+        return 0.0
+    return min(1.0, user_rating / 5.0)
+
+
+def popularity_score(item: _HasPopularity, max_play_count: int) -> float:
+    """Combined popularity signal in 0.0–1.0."""
+    play = popularity_norm_play_count(item.play_count, max_play_count)
+    rating = popularity_norm_rating(item.user_rating)
+    if play > 0 and rating > 0:
+        return 0.7 * play + 0.3 * rating
+    return max(play, rating)
+
+
+def playlist_popularity_score(playlist: Playlist, max_song_count: int) -> float:
+    """Playlists rarely expose play counts; use size as a weak signal."""
+    if playlist.song_count <= 0 or max_song_count <= 0:
+        return 0.0
+    return math.log1p(playlist.song_count) / math.log1p(max_song_count)
+
+
+def combined_score(relevance: int, popularity: float, weights: SearchWeights = DEFAULT_SEARCH_WEIGHTS) -> int:
+    """Merge relevance (0–100) and popularity (0–1) using configured weights."""
+    rel_w = weights.relevance_percent / 100.0
+    pop_w = weights.popularity_percent / 100.0
+    return int(round(relevance * rel_w + popularity * 100.0 * pop_w))
+
+
+def _max_play_count(items: list[_HasPopularity]) -> int:
+    return max((item.play_count for item in items), default=0)
+
+
+def rank_tracks(
+    query: str,
+    tracks: list[Track],
+    weights: SearchWeights = DEFAULT_SEARCH_WEIGHTS,
+) -> SearchMatch | None:
     if not tracks:
         return None
-    best = max(tracks, key=lambda t: score_track(query, t))
-    return SearchMatch(kind="track", score=score_track(query, best), track=best)
+    max_play = _max_play_count(tracks)
+
+    def score(track: Track) -> int:
+        rel = relevance_score_track(query, track)
+        pop = popularity_score(track, max_play)
+        return combined_score(rel, pop, weights)
+
+    best = max(tracks, key=score)
+    return SearchMatch(kind="track", score=score(best), track=best)
 
 
-def rank_playlists(query: str, playlists: list[Playlist]) -> SearchMatch | None:
+def rank_playlists(
+    query: str,
+    playlists: list[Playlist],
+    weights: SearchWeights = DEFAULT_SEARCH_WEIGHTS,
+) -> SearchMatch | None:
     if not playlists:
         return None
-    best = max(playlists, key=lambda p: score_playlist(query, p))
-    return SearchMatch(kind="playlist", score=score_playlist(query, best), playlist=best)
+    max_songs = max((p.song_count for p in playlists), default=0)
+
+    def score(playlist: Playlist) -> int:
+        rel = relevance_score_playlist(query, playlist)
+        pop = playlist_popularity_score(playlist, max_songs)
+        return combined_score(rel, pop, weights)
+
+    best = max(playlists, key=score)
+    return SearchMatch(kind="playlist", score=score(best), playlist=best)
 
 
-def rank_albums(query: str, albums: list[Album]) -> SearchMatch | None:
+def rank_albums(
+    query: str,
+    albums: list[Album],
+    weights: SearchWeights = DEFAULT_SEARCH_WEIGHTS,
+) -> SearchMatch | None:
     if not albums:
         return None
-    best = max(albums, key=lambda a: score_album(query, a))
-    return SearchMatch(kind="album", score=score_album(query, best), album=best)
+    max_play = _max_play_count(albums)
+
+    def score(album: Album) -> int:
+        rel = relevance_score_album(query, album)
+        pop = popularity_score(album, max_play)
+        return combined_score(rel, pop, weights)
+
+    best = max(albums, key=score)
+    return SearchMatch(kind="album", score=score(best), album=best)
+
+
+# Backwards-compatible aliases for tests
+score_track = relevance_score_track
+score_playlist = relevance_score_playlist
+score_album = relevance_score_album
 
 
 def pick_best_match(
@@ -124,6 +213,7 @@ async def resolve_search(
     client: ISubsonicClient,
     query: str,
     mode: SearchMode,
+    weights: SearchWeights = DEFAULT_SEARCH_WEIGHTS,
 ) -> SearchMatch | None:
     """Search Subsonic and return the best ranked match."""
     if not query or not query.strip():
@@ -133,7 +223,7 @@ async def resolve_search(
 
     if mode == SearchMode.PLAYLIST:
         playlists = await client.search_playlists(query)
-        match = rank_playlists(query, playlists)
+        match = rank_playlists(query, playlists, weights)
         if match and match.playlist:
             full = await client.get_playlist(match.playlist.id)
             return SearchMatch(
@@ -145,7 +235,7 @@ async def resolve_search(
 
     if mode == SearchMode.ALBUM:
         albums = await client.search_albums(query)
-        match = rank_albums(query, albums)
+        match = rank_albums(query, albums, weights)
         if match and match.album:
             full = await client.get_album(match.album.id)
             return SearchMatch(
@@ -156,4 +246,4 @@ async def resolve_search(
         return match
 
     tracks = await client.search_tracks(query)
-    return rank_tracks(query, tracks)
+    return rank_tracks(query, tracks, weights)

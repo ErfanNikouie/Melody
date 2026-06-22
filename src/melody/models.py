@@ -35,12 +35,22 @@ class SearchMode(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class SearchWeights:
+    """How relevance and popularity combine when ranking search results (sum to 100)."""
+
+    relevance_percent: int = 85
+    popularity_percent: int = 15
+
+
+@dataclass(frozen=True, slots=True)
 class Track:
     id: str
     title: str
     artist: str
     album: str = ""
     duration: int = 0  # seconds
+    play_count: int = 0
+    user_rating: int = 0  # 0–5 from Subsonic
 
     @property
     def display_name(self) -> str:
@@ -55,6 +65,9 @@ class Album:
     name: str
     artist: str = ""
     tracks: tuple[Track, ...] = field(default_factory=tuple)
+    play_count: int = 0
+    song_count: int = 0
+    user_rating: int = 0
 
     @property
     def track_count(self) -> int:
@@ -72,6 +85,7 @@ class Playlist:
     id: str
     name: str
     tracks: tuple[Track, ...] = field(default_factory=tuple)
+    song_count: int = 0
 
     @property
     def track_count(self) -> int:
