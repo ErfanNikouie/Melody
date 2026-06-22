@@ -172,4 +172,4 @@ async def test_album_not_found_shows_search_error() -> None:
     )
     assert session.messages
     assert "Search failed" in session.messages[0]
-    assert "Octo Fiesta" in session.messages[0]
+    assert "Octo Fiesta" not in session.messages[0]

@@ -9,7 +9,9 @@ from melody.subsonic.xml_utils import (
     parse_album_meta,
     parse_playlist,
     parse_playlist_meta,
+    parse_search_tracks,
     parse_track,
+    search_result3_child_counts,
 )
 
 
@@ -80,3 +82,28 @@ def test_parse_playlist_reads_entry_attributes() -> None:
     assert len(playlist.tracks) == 2
     assert playlist.tracks[0].id == "s1"
     assert playlist.tracks[1].title == "Two"
+
+
+def test_parse_search_tracks_reads_song_and_entry() -> None:
+    element = ET.fromstring(
+        """
+        <searchResult3>
+          <song id="s1" title="Song One" artist="Artist" />
+          <entry id="s2" title="Song Two" artist="Artist" />
+        </searchResult3>
+        """
+    )
+    tracks = parse_search_tracks(element)
+    assert [track.id for track in tracks] == ["s1", "s2"]
+
+
+def test_search_result3_child_counts() -> None:
+    element = ET.fromstring(
+        """
+        <searchResult3>
+          <song id="s1" title="One" artist="A" />
+          <album id="a1" name="Album" artist="A" />
+        </searchResult3>
+        """
+    )
+    assert search_result3_child_counts(element) == {"song": 1, "album": 1}

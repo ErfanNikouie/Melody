@@ -30,7 +30,15 @@ class SearchService:
             mode = SearchMode.TRACK
 
         backend = getattr(self._client, "base_url", "unknown")
-        logger.info("SearchService resolve query=%r mode=%s backend=%s", query, mode.value, backend)
+        logger.info(
+            "SearchService resolve query=%r mode=%s options(album=%s playlist=%s track=%s) backend=%s",
+            query,
+            mode.value,
+            options.album,
+            options.playlist,
+            options.track,
+            backend,
+        )
         match = await resolve_search(self._client, query, mode, weights=self._weights)
         if match is None:
             logger.info("SearchService no match query=%r mode=%s", query, mode.value)

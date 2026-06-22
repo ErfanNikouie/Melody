@@ -25,11 +25,14 @@ from melody.protocols import ISubsonicClient
 from melody.subsonic.xml_utils import (
     _findall,
     check_response_status,
+    find_search_result3,
     parse_album,
-    parse_album_meta,
     parse_playlist,
     parse_playlist_meta,
+    parse_search_albums,
+    parse_search_tracks,
     parse_track,
+    search_result3_child_counts,
 )
 
 logger = get_logger(__name__)
@@ -106,44 +109,82 @@ class SubsonicClient(ISubsonicClient):
         check_response_status(root)
         return root
 
-    async def search_tracks(self, query: str, limit: int = 20) -> list[Track]:
+    async def _search3(
+        self,
+        query: str,
+        *,
+        song_count: int = 20,
+        album_count: int = 20,
+        artist_count: int = 0,
+    ) -> ET.Element | None:
+        """Call search3 with non-zero song/album counts (Octo Fiesta recommendation)."""
         root = await self._fetch_xml(
             "search3.view",
-            {"query": query, "songCount": limit, "albumCount": 0, "artistCount": 0},
+            {
+                "query": query,
+                "songCount": song_count,
+                "albumCount": album_count,
+                "artistCount": artist_count,
+            },
         )
-        result = root.find(".//{http://subsonic.org/restapi}searchResult3")
+        return find_search_result3(root)
+
+    def _log_search3_result(
+        self,
+        query: str,
+        kind: str,
+        result: ET.Element | None,
+        parsed_count: int,
+    ) -> None:
         if result is None:
-            result = root.find(".//searchResult3")
-        if result is None:
-            logger.debug("search3 track query=%r: no searchResult3 element", query)
-            return []
-        tracks = [parse_track(e) for e in _findall(result, "song")]
+            logger.warning(
+                "search3 query=%r kind=%s backend=%s: missing searchResult3 element",
+                query,
+                kind,
+                self._base_url,
+            )
+            return
+
+        child_counts = search_result3_child_counts(result)
         logger.info(
-            "search3 tracks query=%r backend=%s count=%s",
+            "search3 query=%r kind=%s backend=%s parsed=%s xml=%s",
             query,
+            kind,
             self._base_url,
-            len(tracks),
+            parsed_count,
+            child_counts,
         )
+        if parsed_count == 0 and child_counts:
+            logger.warning(
+                "search3 query=%r kind=%s backend=%s: XML had children %s but parsed 0 %s — "
+                "check response format",
+                query,
+                kind,
+                self._base_url,
+                child_counts,
+                kind,
+            )
+
+    async def search_tracks(self, query: str, limit: int = 20) -> list[Track]:
+        result = await self._search3(query, song_count=limit, album_count=limit)
+        if result is None:
+            self._log_search3_result(query, "track", None, 0)
+            return []
+
+        tracks = parse_search_tracks(result)[:limit]
+        self._log_search3_result(query, "track", result, len(tracks))
+        for index, track in enumerate(tracks[:5]):
+            logger.debug("  track[%s] id=%s name=%r", index, track.id, track.display_name)
         return tracks
 
     async def search_albums(self, query: str, limit: int = 20) -> list[Album]:
-        root = await self._fetch_xml(
-            "search3.view",
-            {"query": query, "songCount": 0, "albumCount": limit, "artistCount": 0},
-        )
-        result = root.find(".//{http://subsonic.org/restapi}searchResult3")
+        result = await self._search3(query, song_count=limit, album_count=limit)
         if result is None:
-            result = root.find(".//searchResult3")
-        if result is None:
-            logger.debug("search3 album query=%r: no searchResult3 element", query)
+            self._log_search3_result(query, "album", None, 0)
             return []
-        albums = [parse_album_meta(e) for e in _findall(result, "album")]
-        logger.info(
-            "search3 albums query=%r backend=%s count=%s",
-            query,
-            self._base_url,
-            len(albums),
-        )
+
+        albums = parse_search_albums(result)[:limit]
+        self._log_search3_result(query, "album", result, len(albums))
         for index, album in enumerate(albums[:5]):
             logger.debug(
                 "  album[%s] id=%s name=%r artist=%r song_count=%s",
@@ -221,9 +262,9 @@ class SubsonicClient(ISubsonicClient):
         )
         if not album.tracks:
             logger.warning(
-                "getAlbum id=%s returned 0 tracks on backend=%s — "
-                "streaming-only albums require SUBSONIC_URL pointing at Octo Fiesta",
+                "getAlbum id=%s name=%r returned 0 tracks backend=%s",
                 album_id,
+                album.name,
                 self._base_url,
             )
         return album

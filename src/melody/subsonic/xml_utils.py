@@ -120,6 +120,38 @@ def parse_playlist(element: ET.Element) -> Playlist:
     )
 
 
+def find_search_result3(root: ET.Element) -> ET.Element | None:
+    result = root.find(".//{http://subsonic.org/restapi}searchResult3")
+    if result is None:
+        result = root.find(".//searchResult3")
+    return result
+
+
+def search_result3_child_counts(result: ET.Element) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for child in result:
+        tag = child.tag.split("}")[-1]
+        counts[tag] = counts.get(tag, 0) + 1
+    return counts
+
+
+def parse_search_tracks(result: ET.Element) -> list[Track]:
+    """Parse track hits from a searchResult3 element (song and entry children)."""
+    tracks: list[Track] = []
+    seen_ids: set[str] = set()
+    for tag in ("song", "entry"):
+        for element in _findall(result, tag):
+            track = parse_track(element)
+            if track.id and track.id not in seen_ids:
+                seen_ids.add(track.id)
+                tracks.append(track)
+    return tracks
+
+
+def parse_search_albums(result: ET.Element) -> list[Album]:
+    return [parse_album_meta(element) for element in _findall(result, "album")]
+
+
 def check_response_status(root: ET.Element) -> None:
     status = root.attrib.get("status")
     if status is None:

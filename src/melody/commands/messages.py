@@ -125,48 +125,16 @@ def format_volume_usage() -> str:
     return "ℹ️ <b>Usage:</b> <code>volume [0-100 | up | down | +N | -N]</code>"
 
 
-def format_no_results(*, album: bool = False, playlist: bool = False) -> str:
-    lines = ["🔍 <b>No results found</b>"]
-    if album:
-        lines.append(_streaming_hint())
-    elif playlist:
-        lines.append(
-            f'<span style="color:{_ACCENT_COLOR}">'
-            "Only playlists in your Navidrome library are listed. "
-            "Use Octo Fiesta as SUBSONIC_URL for provider playlists."
-            "</span>"
-        )
-    return "<br/>".join(lines)
+def format_no_results() -> str:
+    return "🔍 <b>No results found</b>"
 
 
-def format_no_playable(*, album: bool = False, playlist: bool = False) -> str:
-    lines = ["⚠️ <b>No playable tracks found</b>"]
-    if album:
-        lines.append(_streaming_hint())
-    elif playlist:
-        lines.append(
-            f'<span style="color:{_ACCENT_COLOR}">'
-            "The playlist exists but has no streamable tracks."
-            "</span>"
-        )
-    return "<br/>".join(lines)
+def format_no_playable() -> str:
+    return "⚠️ <b>No playable tracks found</b>"
 
 
-def format_search_error(detail: str) -> str:
-    return (
-        f"⚠️ <b>Search failed</b><br/>"
-        f'<span style="color:{_ACCENT_COLOR}">{_e(detail)}</span>'
-    )
-
-
-def _streaming_hint() -> str:
-    return (
-        f'<span style="color:{_ACCENT_COLOR}">'
-        "Albums from streaming providers (Spotify, etc.) require "
-        "<code>SUBSONIC_URL</code> pointing at Octo Fiesta (e.g. port 5274), "
-        "not Navidrome directly."
-        "</span>"
-    )
+def format_search_failed() -> str:
+    return "⚠️ <b>Search failed</b>"
 
 
 def format_need_query() -> str:

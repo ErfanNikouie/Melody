@@ -214,9 +214,18 @@ def pick_best_match(
 
 
 _OCTO_FIESTA_HINT = (
-    "Streaming-provider albums/playlists only work when SUBSONIC_URL points at "
-    "Octo Fiesta (e.g. http://host:5274), not Navidrome directly."
+    "for streaming-provider content, point SUBSONIC_URL at Octo Fiesta (e.g. port 5274)"
 )
+
+
+def _empty_results_log_hint(backend: str, kind: str) -> str:
+    if "5274" in backend:
+        return (
+            f"0 {kind} results from Octo Fiesta ({backend}) — "
+            "try a shorter query, confirm the streaming provider is configured, "
+            "or use track search (default) without -a"
+        )
+    return f"0 {kind} results from {backend} — {_OCTO_FIESTA_HINT}"
 
 
 def _log_candidates(kind: str, query: str, items: list[Album] | list[Playlist] | list[Track]) -> None:
@@ -256,7 +265,11 @@ async def resolve_search(
         logger.info("Search playlist candidates=%s query=%r", len(playlists), query)
         _log_candidates("playlist", query, playlists)
         if not playlists:
-            logger.warning("Search playlist returned 0 results query=%r backend=%s", query, backend)
+            logger.warning(
+                "Search playlist returned 0 results query=%r backend=%s",
+                query,
+                backend,
+            )
             return None
         match = rank_playlists(query, playlists, weights)
         if match and match.playlist:
@@ -270,11 +283,10 @@ async def resolve_search(
                 full = await client.get_playlist(match.playlist.id)
             except PlaylistNotFoundError:
                 logger.error(
-                    "getPlaylist failed id=%s query=%r backend=%s — %s",
+                    "getPlaylist failed id=%s query=%r backend=%s",
                     match.playlist.id,
                     query,
                     backend,
-                    _OCTO_FIESTA_HINT,
                 )
                 raise
             if not full.tracks:
@@ -297,10 +309,9 @@ async def resolve_search(
         _log_candidates("album", query, albums)
         if not albums:
             logger.warning(
-                "Search album returned 0 results query=%r backend=%s — %s",
+                "Search album returned 0 results query=%r — %s",
                 query,
-                backend,
-                _OCTO_FIESTA_HINT,
+                _empty_results_log_hint(backend, "album"),
             )
             return None
         match = rank_albums(query, albums, weights)
@@ -315,21 +326,18 @@ async def resolve_search(
                 full = await client.get_album(match.album.id)
             except AlbumNotFoundError:
                 logger.error(
-                    "getAlbum failed id=%s query=%r backend=%s — album was in search but "
-                    "details missing. %s",
+                    "getAlbum failed id=%s query=%r backend=%s (album was in search results)",
                     match.album.id,
                     query,
                     backend,
-                    _OCTO_FIESTA_HINT,
                 )
                 raise
             if not full.tracks:
                 logger.warning(
-                    "getAlbum id=%s name=%r returned 0 playable tracks backend=%s — %s",
+                    "getAlbum id=%s name=%r returned 0 playable tracks backend=%s",
                     full.id,
                     full.display_name,
                     backend,
-                    _OCTO_FIESTA_HINT,
                 )
             return SearchMatch(
                 kind="album",
@@ -342,7 +350,11 @@ async def resolve_search(
     logger.info("Search track candidates=%s query=%r", len(tracks), query)
     _log_candidates("track", query, tracks)
     if not tracks:
-        logger.warning("Search track returned 0 results query=%r backend=%s", query, backend)
+        logger.warning(
+            "Search track returned 0 results query=%r — %s",
+            query,
+            _empty_results_log_hint(backend, "track"),
+        )
         return None
     match = rank_tracks(query, tracks, weights)
     if match and match.track:

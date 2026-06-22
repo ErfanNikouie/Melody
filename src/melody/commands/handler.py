@@ -16,7 +16,7 @@ from melody.commands.messages import (
     format_queue_list,
     format_queued,
     format_resumed,
-    format_search_error,
+    format_search_failed,
     format_stopped,
     format_volume,
     format_volume_usage,
@@ -164,12 +164,7 @@ class CommandHandler:
 
         items, collection = self._match_to_queue_items(match)
         if not items:
-            await feedback(
-                format_no_playable(
-                    album=command.options.album,
-                    playlist=command.options.playlist,
-                )
-            )
+            await feedback(format_no_playable())
             return
 
         self._apply_queue_options(session, command, match)
@@ -192,12 +187,7 @@ class CommandHandler:
 
         items, collection = self._match_to_queue_items(match)
         if not items:
-            await feedback(
-                format_no_playable(
-                    album=command.options.album,
-                    playlist=command.options.playlist,
-                )
-            )
+            await feedback(format_no_playable())
             return
 
         self._apply_queue_options(session, command, match)
@@ -219,29 +209,19 @@ class CommandHandler:
             match = await self._search.resolve(command.query or "", command.options)
         except AlbumNotFoundError as exc:
             logger.warning("Album resolve failed query=%r: %s", command.query, exc)
-            await feedback(
-                format_search_error(
-                    "Album appeared in search but details could not be loaded. "
-                    "If this is from a streaming provider, set SUBSONIC_URL to Octo Fiesta (port 5274)."
-                )
-            )
+            await feedback(format_search_failed())
             return None
         except PlaylistNotFoundError as exc:
             logger.warning("Playlist resolve failed query=%r: %s", command.query, exc)
-            await feedback(format_search_error(f"Playlist could not be loaded: {exc}"))
+            await feedback(format_search_failed())
             return None
         except SubsonicError as exc:
             logger.error("Search failed query=%r: %s", command.query, exc)
-            await feedback(format_search_error(str(exc)))
+            await feedback(format_search_failed())
             return None
 
         if match is None:
-            await feedback(
-                format_no_results(
-                    album=command.options.album,
-                    playlist=command.options.playlist,
-                )
-            )
+            await feedback(format_no_results())
         return match
 
     async def _announce_playback(
