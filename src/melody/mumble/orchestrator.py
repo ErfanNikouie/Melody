@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 
-from melody.commands.handler import CommandHandler
+from melody.commands.handler import CommandHandler, SearchTask
 from melody.commands.messages import format_command_failed, format_joining_channel
 from melody.commands.parser import CommandParser
 from melody.config import Settings
@@ -95,14 +96,18 @@ class MumbleOrchestrator:
         if message.is_private:
             notify = lambda text, sid=message.sender_session: self._coordinator.whisper(sid, text)
 
+        search_tasks = self._handler.start_search_tasks(commands)
+
         try:
             player = await self._acquire_player_for_message(message, notify=notify)
         except RuntimeError as exc:
+            for task in search_tasks.values():
+                task.cancel()
             if notify:
                 await notify(str(exc))
             return
 
-        await self._run_commands(commands, player, message, notify=notify)
+        await self._run_commands(commands, player, message, notify=notify, search_tasks=search_tasks)
 
     async def _acquire_player_for_message(
         self,
@@ -117,7 +122,14 @@ class MumbleOrchestrator:
         if spawning and notify is not None:
             await notify(format_joining_channel(channel_name))
 
+        started = time.monotonic()
         player, _created = await self._pool.acquire(channel_id, channel_name)
+        logger.debug(
+            "Player acquire channel_id=%s created=%s ms=%.0f",
+            channel_id,
+            _created,
+            (time.monotonic() - started) * 1000,
+        )
         self._ensure_player_listener(player)
         return player
 
@@ -150,9 +162,13 @@ class MumbleOrchestrator:
         if not commands:
             return
 
+        search_tasks = self._handler.start_search_tasks(commands)
+
         try:
             player = await self._acquire_player_for_message(message, notify=None)
         except RuntimeError as exc:
+            for task in search_tasks.values():
+                task.cancel()
             logger.warning("Failed to acquire player for channel message: %s", exc)
             return
 
@@ -162,7 +178,7 @@ class MumbleOrchestrator:
                 sid, text
             )
 
-        await self._run_commands(commands, player, message, notify=notify)
+        await self._run_commands(commands, player, message, notify=notify, search_tasks=search_tasks)
 
     async def _run_commands(
         self,
@@ -171,10 +187,24 @@ class MumbleOrchestrator:
         message: ParsedTextMessage,
         *,
         notify: NotifyCallback | None,
+        search_tasks: dict[int, SearchTask] | None = None,
     ) -> None:
+        tasks = search_tasks or {}
         try:
-            for command in commands:
-                destroy = await self._handler.handle(command, player.session, notify=notify)
+            for index, command in enumerate(commands):
+                started = time.monotonic()
+                destroy = await self._handler.handle(
+                    command,
+                    player.session,
+                    notify=notify,
+                    search_task=tasks.get(index),
+                )
+                logger.debug(
+                    "Command %s channel_id=%s ms=%.0f",
+                    command.name,
+                    player.channel_id,
+                    (time.monotonic() - started) * 1000,
+                )
                 if destroy:
                     await self._pool.release(player.channel_id)
                     return
@@ -191,6 +221,10 @@ class MumbleOrchestrator:
                 await notify(format_command_failed())
             else:
                 await player.session.send_message(format_command_failed())
+        finally:
+            for task in tasks.values():
+                if not task.done():
+                    task.cancel()
 
     def _ensure_player_listener(self, player: PlayerBot) -> None:
         if player.channel_id in self._player_queues:

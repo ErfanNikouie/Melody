@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     # Playback
     disconnect_grace_period: float = Field(default=300.0, alias="DISCONNECT_GRACE_PERIOD")
     starting_volume: int = Field(default=100, alias="STARTING_VOLUME")
+    ffmpeg_probesize: str = Field(default="32k", alias="FFMPEG_PROBESIZE")
+    ffmpeg_analyzeduration: str = Field(default="500k", alias="FFMPEG_ANALYZEDURATION")
+    pcm_target_buffer_ms: int = Field(default=80, alias="PCM_TARGET_BUFFER_MS")
+    pcm_max_prebuffer_frames: int = Field(default=6, alias="PCM_MAX_PREBUFFER_FRAMES")
+    pcm_prebuffer_batch_size: int = Field(default=1, alias="PCM_PREBUFFER_BATCH_SIZE")
 
     # Search ranking (must sum to 100)
     search_relevance_percent: int = Field(default=85, alias="SEARCH_RELEVANCE_PERCENT")
@@ -62,6 +67,20 @@ class Settings(BaseSettings):
     def validate_starting_volume(cls, value: int) -> int:
         if not 0 <= value <= 100:
             raise ValueError("STARTING_VOLUME must be between 0 and 100")
+        return value
+
+    @field_validator("pcm_target_buffer_ms")
+    @classmethod
+    def validate_pcm_target_buffer_ms(cls, value: int) -> int:
+        if not 20 <= value <= 500:
+            raise ValueError("PCM_TARGET_BUFFER_MS must be between 20 and 500")
+        return value
+
+    @field_validator("pcm_max_prebuffer_frames", "pcm_prebuffer_batch_size")
+    @classmethod
+    def validate_positive_pcm_int(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("PCM prebuffer settings must be at least 1")
         return value
 
     @model_validator(mode="after")

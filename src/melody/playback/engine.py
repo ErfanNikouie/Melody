@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 
 from melody.logging import get_logger
@@ -34,6 +35,11 @@ class PlaybackEngine:
         send_pcm_batch: SendPcmBatchCallback | None = None,
         get_buffer_size: GetBufferSizeCallback,
         on_track_start: OnTrackStartCallback | None = None,
+        ffmpeg_probesize: str = "32k",
+        ffmpeg_analyzeduration: str = "500k",
+        pcm_target_buffer_sec: float = 0.08,
+        pcm_max_prebuffer_frames: int = 6,
+        pcm_prebuffer_batch_size: int = 1,
     ) -> None:
         self._subsonic = subsonic
         self._queue = queue
@@ -41,6 +47,11 @@ class PlaybackEngine:
         self._send_pcm_batch = send_pcm_batch
         self._get_buffer_size = get_buffer_size
         self._on_track_start = on_track_start
+        self._ffmpeg_probesize = ffmpeg_probesize
+        self._ffmpeg_analyzeduration = ffmpeg_analyzeduration
+        self._pcm_target_buffer_sec = pcm_target_buffer_sec
+        self._pcm_max_prebuffer_frames = pcm_max_prebuffer_frames
+        self._pcm_prebuffer_batch_size = pcm_prebuffer_batch_size
         self._state = PlaybackState.IDLE
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
@@ -172,16 +183,25 @@ class PlaybackEngine:
         )
 
         transcoder = FFmpegTranscoder()
-        await transcoder.start_from_url(stream_url)
+        playback_started = time.monotonic()
+        await transcoder.start_from_url(
+            stream_url,
+            probesize=self._ffmpeg_probesize,
+            analyzeduration=self._ffmpeg_analyzeduration,
+        )
         self._state = PlaybackState.PLAYING
         frames_sent = 0
         pcm_iter = transcoder.read_pcm_frames().__aiter__()
         first_frame_timeout = 30.0
-        pacer = PcmPacer(self._get_buffer_size, frame_duration_sec=FRAME_DURATION_SEC)
+        pacer = PcmPacer(
+            self._get_buffer_size,
+            frame_duration_sec=FRAME_DURATION_SEC,
+            target_buffer_sec=self._pcm_target_buffer_sec,
+        )
         loop = asyncio.get_running_loop()
         pending_batch: list[bytes] = []
-        prebuffer_batch_size = 4
-        max_prebuffer_frames = 12
+        prebuffer_batch_size = self._pcm_prebuffer_batch_size
+        max_prebuffer_frames = self._pcm_max_prebuffer_frames
 
         async def read_next_frame() -> bytes | None:
             try:
@@ -220,9 +240,10 @@ class PlaybackEngine:
             self._elapsed_seconds = frames_sent * FRAME_DURATION_SEC
             if first_flush:
                 logger.info(
-                    "PCM playback started track_id=%s mumble_buffer=%.2fs",
+                    "PCM playback started track_id=%s mumble_buffer=%.2fs first_pcm_ms=%.0f",
                     track.id,
                     self._get_buffer_size(),
+                    (time.monotonic() - playback_started) * 1000,
                 )
             pending_batch.clear()
 

@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from melody.commands.handler import CommandHandler
 from melody.models import Album, CommandOptions, ParsedCommand, SearchMatch, Track
-from melody.playback.queue import PlaybackQueue
+from melody.playback.queue import QueueManager
 from melody.subsonic.errors import AlbumNotFoundError
 
 
 class _Session:
     def __init__(self) -> None:
+        self.channel_id = 1
         self.messages: list[str] = []
         self.volume = 100
-        self.queue = PlaybackQueue()
+        self.queue = QueueManager()
+        self.stop_waited = False
+        self.replaced = False
 
     async def send_message(self, text: str) -> None:
         self.messages.append(text)
@@ -30,8 +35,13 @@ class _Session:
         return None
 
     async def stop_playback(self, *, clear_all: bool = False) -> None:
+        self.stop_waited = True
         if clear_all:
-            self.queue.clear()
+            self.queue.clear_all()
+
+    def replace_playback(self) -> None:
+        self.replaced = True
+        self.queue.clear_all()
 
     async def start_playback(self, *, announce: bool = True) -> None:
         return None
@@ -50,7 +60,7 @@ class _Session:
 
     @property
     def playback_status(self):
-        from melody.models import PlaybackStatus, PlaybackState
+        from melody.models import PlaybackState, PlaybackStatus
 
         return PlaybackStatus(state=PlaybackState.IDLE, track=None, elapsed_seconds=0.0, total_seconds=None)
 
@@ -98,6 +108,49 @@ async def test_feedback_uses_channel_when_no_notify() -> None:
 
     assert session.messages
     assert "search query" in session.messages[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_play_shows_searching_and_does_not_wait_for_stop() -> None:
+    track = Track(id="1", title="Song", artist="Artist")
+    match = SearchMatch(kind="track", score=90, track=track)
+    session = _Session()
+    notified: list[str] = []
+
+    async def notify(text: str) -> None:
+        notified.append(text)
+
+    handler = CommandHandler(search=_Search(match))
+    await handler.handle(
+        ParsedCommand(name="play", options=CommandOptions(), query="song"),
+        session,  # type: ignore[arg-type]
+        notify=notify,
+    )
+
+    assert session.replaced
+    assert not session.stop_waited
+    assert notified[0] == "🔍 <b>Searching</b>…"
+    assert any("Playing" in text for text in notified)
+
+
+@pytest.mark.asyncio
+async def test_play_uses_prefetched_search_task() -> None:
+    track = Track(id="1", title="Song", artist="Artist")
+    match = SearchMatch(kind="track", score=90, track=track)
+    session = _Session()
+    search = _Search(match)
+    handler = CommandHandler(search=search)
+    task = asyncio.create_task(search.resolve("song", CommandOptions()))
+
+    await handler.handle(
+        ParsedCommand(name="play", options=CommandOptions(), query="song"),
+        session,  # type: ignore[arg-type]
+        search_task=task,
+    )
+
+    assert session.replaced
+    assert session.queue.current is not None
+    assert session.queue.current.track.id == "1"
 
 
 @pytest.mark.asyncio
@@ -157,9 +210,10 @@ async def test_album_play_announces_in_channel_when_whispered() -> None:
 
     assert notified
     assert session.messages
-    assert "Playing" in notified[0]
-    assert "Playing" in session.messages[0]
-    assert notified[0] == session.messages[0]
+    assert notified[0] == "🔍 <b>Searching</b>…"
+    assert any("Playing" in text for text in notified)
+    assert any("Playing" in text for text in session.messages)
+    assert notified[-1] == session.messages[-1]
 
 
 @pytest.mark.asyncio
@@ -171,5 +225,5 @@ async def test_album_not_found_shows_search_error() -> None:
         session,  # type: ignore[arg-type]
     )
     assert session.messages
-    assert "Search failed" in session.messages[0]
-    assert "Octo Fiesta" not in session.messages[0]
+    assert any("Search failed" in text for text in session.messages)
+    assert "Octo Fiesta" not in "".join(session.messages)

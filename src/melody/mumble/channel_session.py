@@ -37,6 +37,11 @@ class ChannelSession:
         *,
         starting_volume_percent: int = DEFAULT_VOLUME_PERCENT,
         grace_period: float,
+        ffmpeg_probesize: str = "32k",
+        ffmpeg_analyzeduration: str = "500k",
+        pcm_target_buffer_ms: int = 80,
+        pcm_max_prebuffer_frames: int = 6,
+        pcm_prebuffer_batch_size: int = 1,
         send_pcm: SendPcmCallback,
         send_pcm_batch: SendPcmBatchCallback,
         get_buffer_size: GetBufferSizeCallback,
@@ -69,6 +74,11 @@ class ChannelSession:
             send_pcm_batch=send_pcm_batch,
             get_buffer_size=get_buffer_size,
             on_track_start=self._announce_now_playing,
+            ffmpeg_probesize=ffmpeg_probesize,
+            ffmpeg_analyzeduration=ffmpeg_analyzeduration,
+            pcm_target_buffer_sec=pcm_target_buffer_ms / 1000.0,
+            pcm_max_prebuffer_frames=pcm_max_prebuffer_frames,
+            pcm_prebuffer_batch_size=pcm_prebuffer_batch_size,
         )
 
     async def _announce_now_playing(self, track: Track) -> None:
@@ -78,6 +88,9 @@ class ChannelSession:
         await self._send_message(message)
 
     async def ensure_joined(self) -> None:
+        if self._joined and self._is_in_channel is not None and await self._is_in_channel():
+            self._cancel_grace_timer()
+            return
         if self._is_in_channel is not None and await self._is_in_channel():
             self._joined = True
             self._cancel_grace_timer()
@@ -110,6 +123,11 @@ class ChannelSession:
             self.queue.clear_all()
         else:
             self.queue.clear()
+
+    def replace_playback(self) -> None:
+        """Stop playback and clear the queue without waiting for FFmpeg teardown."""
+        self.engine.stop()
+        self.queue.clear_all()
 
     def pause(self) -> None:
         self.engine.pause()

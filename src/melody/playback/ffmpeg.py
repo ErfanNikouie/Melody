@@ -77,7 +77,13 @@ class FFmpegTranscoder:
         )
         self._stderr_task = asyncio.create_task(self._collect_stderr())
 
-    async def start_from_url(self, url: str) -> None:
+    async def start_from_url(
+        self,
+        url: str,
+        *,
+        probesize: str = "32k",
+        analyzeduration: str = "500k",
+    ) -> None:
         """Decode audio directly from an HTTP(S) stream URL."""
         ffmpeg = find_ffmpeg()
         args = [
@@ -86,6 +92,10 @@ class FFmpegTranscoder:
             "-loglevel",
             "warning",
             "-nostdin",
+            "-fflags",
+            "nobuffer+discardcorrupt",
+            "-flags",
+            "low_delay",
             "-reconnect",
             "1",
             "-reconnect_streamed",
@@ -93,9 +103,9 @@ class FFmpegTranscoder:
             "-reconnect_delay_max",
             "5",
             "-probesize",
-            "1M",
+            probesize,
             "-analyzeduration",
-            "5M",
+            analyzeduration,
             "-i",
             url,
             "-f",

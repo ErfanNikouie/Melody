@@ -137,6 +137,10 @@ def format_search_failed() -> str:
     return "⚠️ <b>Search failed</b>"
 
 
+def format_searching() -> str:
+    return "🔍 <b>Searching</b>…"
+
+
 def format_need_query() -> str:
     return "ℹ️ Please provide a search query."
 

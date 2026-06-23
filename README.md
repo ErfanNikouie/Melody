@@ -178,6 +178,11 @@ pytest
 | `COMMAND_PREFIXES` | No | `m/,melody/,/` | Comma-separated command prefixes |
 | `DISCONNECT_GRACE_PERIOD` | No | `300` | Seconds before leaving empty channels |
 | `STARTING_VOLUME` | No | `100` | Initial playback volume per channel (0–100) |
+| `FFMPEG_PROBESIZE` | No | `32k` | FFmpeg stream probe size (raise if playback fails to start) |
+| `FFMPEG_ANALYZEDURATION` | No | `500k` | FFmpeg stream analyze duration |
+| `PCM_TARGET_BUFFER_MS` | No | `80` | Target Mumble outbound audio buffer before pacing |
+| `PCM_MAX_PREBUFFER_FRAMES` | No | `6` | Max PCM frames to buffer before playback starts |
+| `PCM_PREBUFFER_BATCH_SIZE` | No | `1` | PCM frames per send during prebuffer |
 | `SEARCH_RELEVANCE_PERCENT` | No | `85` | Weight for title/artist match (0–100) |
 | `SEARCH_POPULARITY_PERCENT` | No | `15` | Weight for play count / rating (0–100) |
 | `LOG_LEVEL` | No | `INFO` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
@@ -292,7 +297,7 @@ brew install opus
 
 ### Slow stream startup (Octo Fiesta / Navidrome)
 
-Some backends delay the first bytes of a stream. Melody waits up to 30 seconds for FFmpeg to produce the first PCM frame. If playback still fails, check Subsonic logs and verify `stream.view` works in a browser with the same credentials.
+Some backends delay the first bytes of a stream. Melody waits up to 30 seconds for FFmpeg to produce the first PCM frame. If playback still fails, try increasing `FFMPEG_PROBESIZE` and `FFMPEG_ANALYZEDURATION` in `.env`, then check Subsonic logs and verify `stream.view` works in a browser with the same credentials.
 
 ### Mumble connection denied
 

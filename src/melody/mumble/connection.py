@@ -60,6 +60,7 @@ class MumbleConnection:
         self._ready = asyncio.Event()
         self._bot_session_id: int | None = None
         self._post_connect_channel: int | None = None
+        self._encoder_ready = False
 
     @property
     def username(self) -> str:
@@ -198,6 +199,8 @@ class MumbleConnection:
             except Exception:
                 pass
             encoder_ready = self._mumble.sound_output.encoder is not None
+            if encoder_ready:
+                self._encoder_ready = True
             logger.info(
                 "Voice ready user=%s encoder_ready=%s buffer=%.2fs",
                 self._username,
@@ -216,10 +219,13 @@ class MumbleConnection:
         """Wait until pymumble has a working Opus encoder (CodecVersion received)."""
         if not self._stereo:
             return False
+        if self._encoder_ready:
+            return True
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
             if await asyncio.to_thread(self._has_audio_encoder):
                 await asyncio.to_thread(self._ensure_voice_ready)
+                self._encoder_ready = True
                 return True
             await asyncio.sleep(0.05)
         return False
@@ -230,6 +236,7 @@ class MumbleConnection:
         return self._mumble.sound_output.encoder is not None
 
     def _handle_disconnected(self) -> None:
+        self._encoder_ready = False
         logger.warning("Mumble disconnected user=%s (will reconnect=%s)", self._username, self._reconnect)
         if self._on_disconnected_cb:
             self._on_disconnected_cb()

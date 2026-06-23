@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import Awaitable, Callable
 
 from melody.commands.messages import (
@@ -17,6 +19,7 @@ from melody.commands.messages import (
     format_queued,
     format_resumed,
     format_search_failed,
+    format_searching,
     format_stopped,
     format_volume,
     format_volume_usage,
@@ -31,6 +34,7 @@ from melody.subsonic.errors import AlbumNotFoundError, PlaylistNotFoundError, Su
 logger = get_logger(__name__)
 
 NotifyCallback = Callable[[str], Awaitable[None]]
+SearchTask = asyncio.Task[SearchMatch | None]
 
 
 class CommandHandler:
@@ -40,12 +44,24 @@ class CommandHandler:
         self._search = search
         self._command_prefix = command_prefix
 
+    def start_search_tasks(self, commands: list[ParsedCommand]) -> dict[int, SearchTask]:
+        """Start Subsonic resolve tasks in parallel with player acquisition."""
+        tasks: dict[int, SearchTask] = {}
+        for index, command in enumerate(commands):
+            if command.name in ("play", "queue") and command.query:
+                tasks[index] = asyncio.create_task(
+                    self._search.resolve(command.query, command.options),
+                    name=f"search-{command.name}-{index}",
+                )
+        return tasks
+
     async def handle(
         self,
         command: ParsedCommand,
         session: IChannelSession,
         *,
         notify: NotifyCallback | None = None,
+        search_task: SearchTask | None = None,
     ) -> bool:
         """Handle command. Returns True if session should be destroyed."""
         name = command.name
@@ -61,13 +77,11 @@ class CommandHandler:
             return False
 
         if name == "play":
-            await session.ensure_joined()
-            await self._handle_play(session, command, feedback, notify=notify)
+            await self._handle_play(session, command, feedback, notify=notify, search_task=search_task)
             return False
 
         if name == "queue":
-            await session.ensure_joined()
-            await self._handle_queue(session, command, feedback, notify=notify)
+            await self._handle_queue(session, command, feedback, notify=notify, search_task=search_task)
             return False
 
         if name == "stop":
@@ -156,10 +170,15 @@ class CommandHandler:
         feedback: NotifyCallback,
         *,
         notify: NotifyCallback | None = None,
+        search_task: SearchTask | None = None,
     ) -> None:
-        await session.stop_playback(clear_all=True)
+        started = time.monotonic()
+        session.replace_playback()
+        await feedback(format_searching())
 
-        match = await self._resolve_match(command, feedback)
+        search_started = time.monotonic()
+        match = await self._resolve_match(command, feedback, search_task=search_task)
+        search_ms = (time.monotonic() - search_started) * 1000
         if match is None:
             return
 
@@ -173,6 +192,12 @@ class CommandHandler:
         session.queue.play_now(items, **collection)
         await self._announce_playback(match, session, feedback, notify=notify)
         await session.start_playback(announce=False)
+        logger.debug(
+            "Play command finished channel_id=%s search_ms=%.0f total_ms=%.0f",
+            session.channel_id,
+            search_ms,
+            (time.monotonic() - started) * 1000,
+        )
 
     async def _handle_queue(
         self,
@@ -181,8 +206,12 @@ class CommandHandler:
         feedback: NotifyCallback,
         *,
         notify: NotifyCallback | None = None,
+        search_task: SearchTask | None = None,
     ) -> None:
-        match = await self._resolve_match(command, feedback)
+        started = time.monotonic()
+        await feedback(format_searching())
+
+        match = await self._resolve_match(command, feedback, search_task=search_task)
         if match is None:
             return
 
@@ -201,13 +230,24 @@ class CommandHandler:
         else:
             await feedback(format_queued(match.display_name, match.track_count))
 
+        logger.debug(
+            "Queue command finished channel_id=%s total_ms=%.0f",
+            session.channel_id,
+            (time.monotonic() - started) * 1000,
+        )
+
     async def _resolve_match(
         self,
         command: ParsedCommand,
         feedback: NotifyCallback,
+        *,
+        search_task: SearchTask | None = None,
     ) -> SearchMatch | None:
         try:
-            match = await self._search.resolve(command.query or "", command.options)
+            if search_task is not None:
+                match = await search_task
+            else:
+                match = await self._search.resolve(command.query or "", command.options)
         except AlbumNotFoundError as exc:
             logger.warning("Album resolve failed query=%r: %s", command.query, exc)
             await feedback(format_search_failed())
