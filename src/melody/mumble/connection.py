@@ -25,8 +25,8 @@ DisconnectedHandler = Callable[[], None]
 
 _MESSAGE_RETRIES = 3
 _MESSAGE_RETRY_DELAY = 0.15
-_CHANNEL_JOIN_RETRIES = 15
-_CHANNEL_JOIN_DELAY = 0.1
+_CHANNEL_JOIN_RETRIES = 10
+_CHANNEL_JOIN_DELAY = 0.03
 
 
 class MumbleConnection:
@@ -166,9 +166,9 @@ class MumbleConnection:
         if self._mumble is not None:
             self._bot_session_id = get_session_id(self._mumble)
         logger.info("Mumble connected user=%s session=%s", self._username, self._bot_session_id)
-        self._ensure_voice_ready()
         if self._post_connect_channel is not None:
             self._join_channel_sync(self._post_connect_channel)
+        self._ensure_voice_ready()
         if self._on_connected_cb:
             self._on_connected_cb()
         if self._loop and not self._ready.is_set():
@@ -244,8 +244,16 @@ class MumbleConnection:
             return
         self._loop.call_soon_threadsafe(self._on_text, parsed)
 
+    async def is_in_channel(self, channel_id: int) -> bool:
+        return await asyncio.to_thread(self._is_in_channel_sync, channel_id)
+
+    def _is_in_channel_sync(self, channel_id: int) -> bool:
+        return self.current_channel_id == channel_id
+
     async def join_channel(self, channel_id: int) -> bool:
         self._post_connect_channel = channel_id
+        if await self.is_in_channel(channel_id):
+            return True
         return await asyncio.to_thread(self._join_channel_sync, channel_id)
 
     def _join_channel_sync(self, channel_id: int) -> bool:
@@ -256,6 +264,9 @@ class MumbleConnection:
                 channel_id,
             )
             return False
+
+        if self._is_in_channel_sync(channel_id):
+            return True
 
         last_exc: Exception | None = None
         for attempt in range(1, _CHANNEL_JOIN_RETRIES + 1):

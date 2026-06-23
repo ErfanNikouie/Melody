@@ -17,6 +17,7 @@ from melody.protocols import ISubsonicClient
 logger = get_logger(__name__)
 
 JoinChannelCallback = Callable[[], Awaitable[bool]]
+IsInChannelCallback = Callable[[], Awaitable[bool]]
 LeaveChannelCallback = Callable[[], Awaitable[None]]
 SendMessageCallback = Callable[[str], Awaitable[None]]
 SendPcmCallback = Callable[[bytes], Awaitable[None]]
@@ -44,6 +45,7 @@ class ChannelSession:
         get_buffer_size: GetBufferSizeCallback,
         wait_for_audio_encoder: WaitForAudioEncoderCallback,
         join_channel: JoinChannelCallback,
+        is_in_channel: IsInChannelCallback | None = None,
         leave_channel: LeaveChannelCallback,
         send_message: SendMessageCallback,
         on_shutdown: OnShutdownCallback,
@@ -53,6 +55,7 @@ class ChannelSession:
         self.queue = QueueManager()
         self._grace_period = grace_period
         self._join_channel = join_channel
+        self._is_in_channel = is_in_channel
         self._leave_channel = leave_channel
         self._send_message = send_message
         self._request_destroy = on_shutdown
@@ -80,6 +83,10 @@ class ChannelSession:
         await self._send_message(message)
 
     async def ensure_joined(self) -> None:
+        if self._is_in_channel is not None and await self._is_in_channel():
+            self._joined = True
+            self._cancel_grace_timer()
+            return
         if await self._join_channel():
             self._joined = True
             self._cancel_grace_timer()

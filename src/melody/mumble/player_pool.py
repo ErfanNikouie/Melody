@@ -17,6 +17,7 @@ from melody.protocols import ISubsonicClient
 logger = get_logger(__name__)
 
 ReleaseCallback = Callable[[int], Awaitable[None]]
+PlayerCreatedCallback = Callable[["PlayerBot"], None]
 
 
 class PlayerBot:
@@ -58,6 +59,7 @@ class PlayerPool:
         self._subsonic = subsonic
         self._buffer_pool = buffer_pool
         self._on_release = on_release
+        self._on_player_created: PlayerCreatedCallback | None = None
         self._lock = asyncio.Lock()
         self._active: dict[int, PlayerBot] = {}
         self._free_slots: list[int] = list(range(1, settings.player_pool_size + 1))
@@ -70,16 +72,24 @@ class PlayerPool:
     def set_on_release(self, callback: ReleaseCallback | None) -> None:
         self._on_release = callback
 
+    def set_on_player_created(self, callback: PlayerCreatedCallback | None) -> None:
+        self._on_player_created = callback
+
     @property
     def active_count(self) -> int:
         return len(self._active)
 
-    async def acquire(self, channel_id: int, channel_name: str) -> PlayerBot:
+    def has_channel(self, channel_id: int) -> bool:
+        return channel_id in self._active
+
+    async def acquire(self, channel_id: int, channel_name: str) -> tuple[PlayerBot, bool]:
+        created = False
         async with self._lock:
             existing = self._active.get(channel_id)
             if existing is not None:
                 player = existing
             else:
+                created = True
                 player = None
                 username, password = self._resolve_credentials(channel_id, channel_name)
                 connection = MumbleConnection(
@@ -108,6 +118,7 @@ class PlayerPool:
                     get_buffer_size=connection.get_buffer_size,
                     wait_for_audio_encoder=connection.wait_for_audio_encoder,
                     join_channel=lambda cid=channel_id: connection.join_channel(cid),
+                    is_in_channel=lambda cid=channel_id: connection.is_in_channel(cid),
                     leave_channel=lambda: asyncio.sleep(0),
                     send_message=lambda msg, cid=channel_id: connection.send_channel_message(cid, msg),
                     on_shutdown=release_this,
@@ -115,21 +126,17 @@ class PlayerPool:
 
                 player = PlayerBot(connection, channel_id, channel_name, session)
                 self._active[channel_id] = player
+                if self._on_player_created is not None:
+                    self._on_player_created(player)
 
         if self._loop is None:
             raise RuntimeError("PlayerPool loop not set")
 
         if existing is not None:
             await player.session.ensure_joined()
-            return player
+            return player, False
 
         await player.start(self._loop)
-        if not await player.connection.wait_for_audio_encoder():
-            logger.warning(
-                "Opus encoder not ready user=%s channel_id=%s",
-                player.connection.username,
-                channel_id,
-            )
         await player.session.ensure_joined()
         logger.info(
             "Player assigned user=%s channel_id=%s channel_name=%s active=%s",
@@ -138,7 +145,7 @@ class PlayerPool:
             channel_name,
             len(self._active),
         )
-        return player
+        return player, True
 
     async def release(self, channel_id: int) -> None:
         async with self._lock:

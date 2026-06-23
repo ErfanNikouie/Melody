@@ -171,8 +171,8 @@ class CommandHandler:
         self._apply_queue_options(session, command, match)
 
         session.queue.play_now(items, **collection)
-        await session.start_playback(announce=False)
         await self._announce_playback(match, session, feedback, notify=notify)
+        await session.start_playback(announce=False)
 
     async def _handle_queue(
         self,
@@ -196,8 +196,8 @@ class CommandHandler:
         was_idle = session.queue.is_idle
         session.queue.enqueue(items, **collection)
         if was_idle:
-            await session.start_playback(announce=False)
             await self._announce_playback(match, session, feedback, notify=notify)
+            await session.start_playback(announce=False)
         else:
             await feedback(format_queued(match.display_name, match.track_count))
 

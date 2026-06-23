@@ -107,6 +107,15 @@ def _channel_name(mumble: Any, channel_id: int) -> str:
         return str(channel_id)
 
 
+def is_player_channel_message(message: ParsedTextMessage, channel_id: int) -> bool:
+    """True if the MelodyPlayer in channel_id should handle this text."""
+    if message.is_private:
+        return True
+    if message.target_channel_id == channel_id:
+        return True
+    return message.sender_channel_id == channel_id
+
+
 def sanitize_username_part(name: str, *, max_length: int = 24) -> str:
     """Sanitize a channel name for use in MelodyPlayer-{name} usernames."""
     cleaned = re.sub(r"[^\w\-]", "_", name.strip())

@@ -141,6 +141,14 @@ def format_need_query() -> str:
     return "ℹ️ Please provide a search query."
 
 
+def format_joining_channel(channel_name: str) -> str:
+    return f"⏳ <b>Joining</b> {_e(channel_name)}…"
+
+
+def format_command_failed() -> str:
+    return "⚠️ <b>Command failed</b>"
+
+
 def format_queue_empty() -> str:
     return "📭 <b>Queue is empty</b>"
 

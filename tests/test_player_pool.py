@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from melody.mumble.channel_session import ChannelSession
-from melody.mumble.pymumble_util import sanitize_username_part
+from melody.mumble.pymumble_util import ParsedTextMessage, is_player_channel_message, sanitize_username_part
 
 
 def test_sanitize_channel_name() -> None:
@@ -33,6 +33,44 @@ async def test_ensure_joined_stays_unjoined_when_move_fails() -> None:
 
     await session.ensure_joined()
     assert not session._joined  # noqa: SLF001
+
+
+def test_is_player_channel_message_accepts_channel_chat() -> None:
+    channel_id = 5
+    channel_msg = ParsedTextMessage(
+        sender_session=1,
+        sender_name="user",
+        message="m/list",
+        sender_channel_id=channel_id,
+        sender_channel_name="Music",
+        is_private=False,
+        target_channel_id=channel_id,
+    )
+    assert is_player_channel_message(channel_msg, channel_id)
+
+    other_channel = ParsedTextMessage(
+        sender_session=1,
+        sender_name="user",
+        message="m/list",
+        sender_channel_id=99,
+        sender_channel_name="Other",
+        is_private=False,
+        target_channel_id=99,
+    )
+    assert not is_player_channel_message(other_channel, channel_id)
+
+
+def test_is_player_channel_message_accepts_whispers() -> None:
+    whisper = ParsedTextMessage(
+        sender_session=1,
+        sender_name="user",
+        message="m/help",
+        sender_channel_id=5,
+        sender_channel_name="Music",
+        is_private=True,
+        target_channel_id=None,
+    )
+    assert is_player_channel_message(whisper, 5)
 
 
 async def _async_true() -> bool:
