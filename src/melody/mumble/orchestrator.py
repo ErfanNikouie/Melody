@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
 
 from melody.commands.handler import CommandHandler, SearchTask
@@ -38,9 +39,14 @@ class MumbleOrchestrator:
         self._parser = parser
         self._handler = handler
         self._pool = pool
-        self._coordinator = CoordinatorBot(settings, on_text=self._on_coordinator_text)
+        self._coordinator = CoordinatorBot(
+            settings,
+            on_text=self._on_coordinator_text,
+            has_player_in_channel=pool.has_channel,
+        )
         self._player_queues: dict[int, asyncio.Queue[ParsedTextMessage | object]] = {}
         self._player_tasks: dict[int, asyncio.Task[None]] = {}
+        self._command_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         pool.set_on_release(self._on_player_released)
         pool.set_on_player_created(self._ensure_player_listener)
 
@@ -190,27 +196,29 @@ class MumbleOrchestrator:
         search_tasks: dict[int, SearchTask] | None = None,
     ) -> None:
         tasks = search_tasks or {}
+        lock = self._command_locks[player.channel_id]
         try:
-            for index, command in enumerate(commands):
-                started = time.monotonic()
-                destroy = await self._handler.handle(
-                    command,
-                    player.session,
-                    notify=notify,
-                    search_task=tasks.get(index),
-                )
-                logger.debug(
-                    "Command %s channel_id=%s ms=%.0f",
-                    command.name,
-                    player.channel_id,
-                    (time.monotonic() - started) * 1000,
-                )
-                if destroy:
-                    await self._pool.release(player.channel_id)
-                    return
-                player.session.update_human_count(
-                    player.connection.count_humans_in(player.channel_id)
-                )
+            async with lock:
+                for index, command in enumerate(commands):
+                    started = time.monotonic()
+                    destroy = await self._handler.handle(
+                        command,
+                        player.session,
+                        notify=notify,
+                        search_task=tasks.get(index),
+                    )
+                    logger.debug(
+                        "Command %s channel_id=%s ms=%.0f",
+                        command.name,
+                        player.channel_id,
+                        (time.monotonic() - started) * 1000,
+                    )
+                    if destroy:
+                        await self._pool.release(player.channel_id)
+                        return
+                    player.session.update_human_count(
+                        player.connection.count_humans_in(player.channel_id)
+                    )
         except Exception:
             logger.exception(
                 "Command failed channel_id=%s from=%s",

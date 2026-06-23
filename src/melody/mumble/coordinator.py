@@ -13,6 +13,7 @@ from melody.mumble.pymumble_util import ROOT_CHANNEL_ID, ParsedTextMessage
 logger = get_logger(__name__)
 
 TextCallback = Callable[[ParsedTextMessage], Awaitable[None]]
+HasPlayerCallback = Callable[[int], bool]
 
 
 class CoordinatorBot:
@@ -23,9 +24,11 @@ class CoordinatorBot:
         settings: Settings,
         *,
         on_text: TextCallback,
+        has_player_in_channel: HasPlayerCallback | None = None,
     ) -> None:
         self._settings = settings
         self._on_text = on_text
+        self._has_player_in_channel = has_player_in_channel or (lambda _cid: False)
         self._text_queue: asyncio.Queue[ParsedTextMessage] = asyncio.Queue()
         self._connection = MumbleConnection(
             settings.mumble_host,
@@ -82,5 +85,8 @@ class CoordinatorBot:
             self._settings.coordinator_accept_root_messages
             and message.target_channel_id == ROOT_CHANNEL_ID
         ):
+            # MelodyPlayer in root handles root channel chat once it is active.
+            if self._has_player_in_channel(ROOT_CHANNEL_ID):
+                return False
             return True
         return False
