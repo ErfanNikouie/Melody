@@ -25,6 +25,8 @@ DisconnectedHandler = Callable[[], None]
 
 _MESSAGE_RETRIES = 3
 _MESSAGE_RETRY_DELAY = 0.15
+_CHANNEL_JOIN_RETRIES = 15
+_CHANNEL_JOIN_DELAY = 0.1
 
 
 class MumbleConnection:
@@ -242,19 +244,76 @@ class MumbleConnection:
             return
         self._loop.call_soon_threadsafe(self._on_text, parsed)
 
-    async def join_channel(self, channel_id: int) -> None:
+    async def join_channel(self, channel_id: int) -> bool:
         self._post_connect_channel = channel_id
-        await asyncio.to_thread(self._join_channel_sync, channel_id)
+        return await asyncio.to_thread(self._join_channel_sync, channel_id)
 
-    def _join_channel_sync(self, channel_id: int) -> None:
+    def _join_channel_sync(self, channel_id: int) -> bool:
         if self._mumble is None:
-            return
+            logger.warning(
+                "Cannot join channel user=%s channel_id=%s (not connected)",
+                self._username,
+                channel_id,
+            )
+            return False
+
+        last_exc: Exception | None = None
+        for attempt in range(1, _CHANNEL_JOIN_RETRIES + 1):
+            try:
+                channel = self._mumble.channels[channel_id]
+                channel.move_in()
+                current = self.current_channel_id
+                if current != channel_id:
+                    logger.warning(
+                        "Join channel mismatch user=%s expected=%s actual=%s",
+                        self._username,
+                        channel_id,
+                        current,
+                    )
+                logger.info(
+                    "Joined channel user=%s channel_id=%s name=%s",
+                    self._username,
+                    channel_id,
+                    channel["name"],
+                )
+                return True
+            except KeyError as exc:
+                last_exc = exc
+                if attempt < _CHANNEL_JOIN_RETRIES:
+                    time.sleep(_CHANNEL_JOIN_DELAY)
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "Join channel attempt %s/%s failed user=%s channel_id=%s: %s",
+                    attempt,
+                    _CHANNEL_JOIN_RETRIES,
+                    self._username,
+                    channel_id,
+                    exc,
+                )
+                if attempt < _CHANNEL_JOIN_RETRIES:
+                    time.sleep(_CHANNEL_JOIN_DELAY)
+
+        logger.error(
+            "Failed to join channel user=%s channel_id=%s after %s attempts: %s",
+            self._username,
+            channel_id,
+            _CHANNEL_JOIN_RETRIES,
+            last_exc,
+        )
+        return False
+
+    @property
+    def current_channel_id(self) -> int | None:
+        if self._mumble is None:
+            return None
         try:
-            channel = self._mumble.channels[channel_id]
-            channel.move_in()
-            logger.info("Joined channel user=%s channel_id=%s name=%s", self._username, channel_id, channel["name"])
-        except Exception:
-            logger.exception("Failed to join channel user=%s channel_id=%s", self._username, channel_id)
+            myself = self._mumble.users.myself
+            if myself is None:
+                return None
+            return int(myself["channel_id"])
+        except (KeyError, TypeError, AttributeError):
+            return None
 
     async def move_to_root(self) -> None:
         await self.join_channel(0)

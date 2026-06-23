@@ -78,52 +78,62 @@ class PlayerPool:
         async with self._lock:
             existing = self._active.get(channel_id)
             if existing is not None:
-                return existing
+                player = existing
+            else:
+                player = None
+                username, password = self._resolve_credentials(channel_id, channel_name)
+                connection = MumbleConnection(
+                    self._settings.mumble_host,
+                    self._settings.mumble_port,
+                    username,
+                    password,
+                    reconnect=True,
+                    stereo=True,
+                    on_text=None,
+                )
 
-            username, password = self._resolve_credentials(channel_id, channel_name)
-            connection = MumbleConnection(
-                self._settings.mumble_host,
-                self._settings.mumble_port,
-                username,
-                password,
-                reconnect=True,
-                stereo=True,
-                on_text=None,
-            )
+                async def release_this() -> None:
+                    await self.release(channel_id)
 
-            async def release_this() -> None:
-                await self.release(channel_id)
+                session = ChannelSession(
+                    channel_id,
+                    channel_name,
+                    self._subsonic,
+                    self._buffer_pool,
+                    start_seconds=self._settings.audio_buffer_start_seconds,
+                    starting_volume_percent=self._settings.starting_volume,
+                    grace_period=self._settings.disconnect_grace_period,
+                    send_pcm=connection.send_pcm,
+                    send_pcm_batch=connection.send_pcm_batch,
+                    get_buffer_size=connection.get_buffer_size,
+                    wait_for_audio_encoder=connection.wait_for_audio_encoder,
+                    join_channel=lambda cid=channel_id: connection.join_channel(cid),
+                    leave_channel=lambda: asyncio.sleep(0),
+                    send_message=lambda msg, cid=channel_id: connection.send_channel_message(cid, msg),
+                    on_shutdown=release_this,
+                )
 
-            session = ChannelSession(
-                channel_id,
-                channel_name,
-                self._subsonic,
-                self._buffer_pool,
-                start_seconds=self._settings.audio_buffer_start_seconds,
-                starting_volume_percent=self._settings.starting_volume,
-                grace_period=self._settings.disconnect_grace_period,
-                send_pcm=connection.send_pcm,
-                send_pcm_batch=connection.send_pcm_batch,
-                get_buffer_size=connection.get_buffer_size,
-                wait_for_audio_encoder=connection.wait_for_audio_encoder,
-                join_channel=lambda cid=channel_id: connection.join_channel(cid),
-                leave_channel=lambda: asyncio.sleep(0),
-                send_message=lambda msg, cid=channel_id: connection.send_channel_message(cid, msg),
-                on_shutdown=release_this,
-            )
-
-            player = PlayerBot(connection, channel_id, channel_name, session)
-            self._active[channel_id] = player
+                player = PlayerBot(connection, channel_id, channel_name, session)
+                self._active[channel_id] = player
 
         if self._loop is None:
             raise RuntimeError("PlayerPool loop not set")
+
+        if existing is not None:
+            await player.session.ensure_joined()
+            return player
+
         await player.start(self._loop)
-        if not await connection.wait_for_audio_encoder():
-            logger.warning("Opus encoder not ready user=%s channel_id=%s", username, channel_id)
-        player.session.mark_joined()
+        if not await player.connection.wait_for_audio_encoder():
+            logger.warning(
+                "Opus encoder not ready user=%s channel_id=%s",
+                player.connection.username,
+                channel_id,
+            )
+        await player.session.ensure_joined()
         logger.info(
             "Player assigned user=%s channel_id=%s channel_name=%s active=%s",
-            username,
+            player.connection.username,
             channel_id,
             channel_name,
             len(self._active),

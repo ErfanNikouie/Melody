@@ -16,7 +16,7 @@ from melody.protocols import ISubsonicClient
 
 logger = get_logger(__name__)
 
-JoinChannelCallback = Callable[[], Awaitable[None]]
+JoinChannelCallback = Callable[[], Awaitable[bool]]
 LeaveChannelCallback = Callable[[], Awaitable[None]]
 SendMessageCallback = Callable[[str], Awaitable[None]]
 SendPcmCallback = Callable[[bytes], Awaitable[None]]
@@ -80,14 +80,18 @@ class ChannelSession:
         await self._send_message(message)
 
     async def ensure_joined(self) -> None:
-        if self._joined:
-            return
-        await self._join_channel()
-        self._joined = True
-        self._cancel_grace_timer()
+        if await self._join_channel():
+            self._joined = True
+            self._cancel_grace_timer()
+        else:
+            logger.error(
+                "Failed to join channel channel_id=%s channel_name=%s",
+                self.channel_id,
+                self.channel_name,
+            )
 
     def mark_joined(self) -> None:
-        """Player already moved into the channel on connect."""
+        """Mark session as joined without moving (only when join already verified)."""
         self._joined = True
         self._cancel_grace_timer()
 
