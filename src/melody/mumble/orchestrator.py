@@ -19,6 +19,9 @@ logger = get_logger(__name__)
 
 NotifyCallback = Callable[[str], Awaitable[None]]
 
+_PLAYER_QUEUE_MAX = 64
+_SHUTDOWN = object()
+
 
 class MumbleOrchestrator:
     """Single-process orchestrator for coordinator + player pool."""
@@ -35,7 +38,8 @@ class MumbleOrchestrator:
         self._handler = handler
         self._pool = pool
         self._coordinator = CoordinatorBot(settings, on_text=self._on_coordinator_text)
-        self._player_queues: dict[int, asyncio.Queue[ParsedTextMessage]] = {}
+        self._player_queues: dict[int, asyncio.Queue[ParsedTextMessage | object]] = {}
+        self._player_tasks: dict[int, asyncio.Task[None]] = {}
         pool.set_on_release(self._on_player_released)
         pool.set_on_player_created(self._ensure_player_listener)
 
@@ -55,6 +59,8 @@ class MumbleOrchestrator:
         logger.info("Melody coordinator connected as %s", self._settings.mumble_username)
 
     async def stop(self) -> None:
+        for channel_id in list(self._player_tasks):
+            await self._shutdown_player_listener(channel_id)
         await self._pool.stop_all()
         await self._coordinator.stop()
 
@@ -63,7 +69,22 @@ class MumbleOrchestrator:
         return self._coordinator.connection.is_connected
 
     async def _on_player_released(self, channel_id: int) -> None:
-        self._player_queues.pop(channel_id, None)
+        await self._shutdown_player_listener(channel_id)
+
+    async def _shutdown_player_listener(self, channel_id: int) -> None:
+        task = self._player_tasks.pop(channel_id, None)
+        queue = self._player_queues.pop(channel_id, None)
+        if queue is not None:
+            try:
+                queue.put_nowait(_SHUTDOWN)
+            except asyncio.QueueFull:
+                pass
+        if task is not None:
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
 
     async def _on_coordinator_text(self, message: ParsedTextMessage) -> None:
         commands = self._parser.parse_all(message.message)
@@ -103,11 +124,23 @@ class MumbleOrchestrator:
     async def _player_message_loop(
         self,
         channel_id: int,
-        queue: asyncio.Queue[ParsedTextMessage],
+        queue: asyncio.Queue[ParsedTextMessage | object],
     ) -> None:
-        while channel_id in self._player_queues:
-            message = await queue.get()
-            await self._handle_player_text(channel_id, message)
+        try:
+            while True:
+                message = await queue.get()
+                if message is _SHUTDOWN:
+                    break
+                if not isinstance(message, ParsedTextMessage):
+                    continue
+                await self._handle_player_text(channel_id, message)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if self._player_tasks.get(channel_id) is asyncio.current_task():
+                self._player_tasks.pop(channel_id, None)
+            if self._player_queues.get(channel_id) is queue:
+                self._player_queues.pop(channel_id, None)
 
     async def _handle_player_text(self, channel_id: int, message: ParsedTextMessage) -> None:
         if not is_player_channel_message(message, channel_id):
@@ -163,11 +196,19 @@ class MumbleOrchestrator:
         if player.channel_id in self._player_queues:
             return
 
-        queue: asyncio.Queue[ParsedTextMessage] = asyncio.Queue()
+        queue: asyncio.Queue[ParsedTextMessage | object] = asyncio.Queue(maxsize=_PLAYER_QUEUE_MAX)
         self._player_queues[player.channel_id] = queue
 
         def on_player_text(msg: ParsedTextMessage) -> None:
-            queue.put_nowait(msg)
+            try:
+                queue.put_nowait(msg)
+            except asyncio.QueueFull:
+                logger.warning(
+                    "Dropped player text message channel_id=%s (queue full)",
+                    player.channel_id,
+                )
 
         player.connection._on_text = on_player_text  # noqa: SLF001
-        asyncio.create_task(self._player_message_loop(player.channel_id, queue))
+        self._player_tasks[player.channel_id] = asyncio.create_task(
+            self._player_message_loop(player.channel_id, queue)
+        )

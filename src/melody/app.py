@@ -11,7 +11,6 @@ from melody.config import Settings
 from melody.logging import get_logger, setup_logging
 from melody.mumble.orchestrator import MumbleOrchestrator
 from melody.mumble.player_pool import PlayerPool
-from melody.playback.buffer import GlobalBufferPool
 from melody.models import SearchWeights
 from melody.services.search import SearchService
 from melody.subsonic.client import SubsonicClient
@@ -29,7 +28,6 @@ class MelodyApp:
             settings.subsonic_username,
             settings.subsonic_password,
         )
-        self._buffer_pool = GlobalBufferPool(settings.audio_buffer_max_bytes)
         self._parser = CommandParser(settings.prefixes)
         self._search = SearchService(
             self._subsonic,
@@ -40,7 +38,7 @@ class MelodyApp:
         )
         prefix = settings.prefixes[-1] if settings.prefixes else "m/"
         self._handler = CommandHandler(self._search, command_prefix=prefix)
-        self._pool = PlayerPool(settings, self._subsonic, self._buffer_pool)
+        self._pool = PlayerPool(settings, self._subsonic)
         self._orchestrator = MumbleOrchestrator(
             settings,
             self._parser,

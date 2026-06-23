@@ -334,8 +334,13 @@ class SubsonicClient(ISubsonicClient):
 
     async def stream(self, song_id: str) -> AsyncIterator[bytes]:
         _, audio = await self.open_stream(song_id)
-        async for chunk in audio:
-            yield chunk
+        try:
+            async for chunk in audio:
+                yield chunk
+        finally:
+            closer = getattr(audio, "aclose", None)
+            if closer is not None:
+                await closer()
 
     async def close(self) -> None:
         if self._owns_session and self._session is not None:

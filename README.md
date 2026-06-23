@@ -7,7 +7,6 @@ A production-quality Mumble music bot that streams music from any **Subsonic-com
 - Per-channel queues with history, repeat, and shuffle
 - Real-time streaming via Subsonic `stream.view` — tracks are never fully downloaded
 - FFmpeg transcoding to Mumble-compatible PCM (48 kHz, 16-bit stereo)
-- Bounded rolling buffer for slow stream startup (e.g. Octo Fiesta behind Navidrome)
 - **Multi-channel playback** — one `MelodyPlayer` connection per active channel (true simultaneous playback)
 - **Whisper commands** — whisper `Melody` from any channel; coordinator assigns a player to your channel
 - Auto-release players when channels are empty; automatic reconnect if kicked
@@ -85,16 +84,15 @@ No layer imports from Mumble or App. Commands talk to sessions through `IChannel
 | **CommandHandler** | Executes commands via `IChannelSession` and `SearchService` |
 | **SearchService** | Resolves queries to ranked Subsonic matches |
 | **QueueManager** | History, current track, upcoming queue, repeat/shuffle |
-| **PlaybackEngine** | Streams from Subsonic, buffers, transcodes via FFmpeg, sends PCM |
+| **PlaybackEngine** | Streams from Subsonic, transcodes via FFmpeg, sends PCM |
 | **ISubsonicClient** | Backend-agnostic Subsonic API interface (in `protocols`) |
 | **SubsonicClient** | aiohttp implementation for any Open Subsonic server |
 
 ### Audio pipeline
 
-1. HTTP stream from Subsonic `stream.view` (chunked, not fully downloaded)
-2. Rolling buffer until `AUDIO_BUFFER_START_SECONDS` of audio is available
-3. FFmpeg transcodes encoded audio → s16le 48 kHz stereo PCM
-4. PCM frames sent to Mumble via [PyMumble](https://github.com/azlux/pymumble)
+1. HTTP stream from Subsonic `stream.view` (FFmpeg reads the URL directly)
+2. FFmpeg transcodes encoded audio → s16le 48 kHz stereo PCM
+3. PCM frames sent to Mumble via [PyMumble](https://github.com/azlux/pymumble)
 
 ## Supported Subsonic backends
 
@@ -136,7 +134,7 @@ docker compose up -d
 docker compose logs -f melody
 ```
 
-The container runs as a non-root `melody` user, includes FFmpeg, and stores temporary audio buffers in `/tmp/melody-buffer`.
+The container runs as a non-root `melody` user and includes FFmpeg.
 
 ## Local development
 
@@ -179,8 +177,6 @@ pytest
 | `COORDINATOR_ACCEPT_ROOT_MESSAGES` | No | `true` | Also accept commands in root channel chat |
 | `COMMAND_PREFIXES` | No | `m/,melody/,/` | Comma-separated command prefixes |
 | `DISCONNECT_GRACE_PERIOD` | No | `300` | Seconds before leaving empty channels |
-| `AUDIO_BUFFER_MAX_MB` | No | `256` | Max buffer size across all streams |
-| `AUDIO_BUFFER_START_SECONDS` | No | `3` | Min buffer before playback starts |
 | `STARTING_VOLUME` | No | `100` | Initial playback volume per channel (0–100) |
 | `SEARCH_RELEVANCE_PERCENT` | No | `85` | Weight for title/artist match (0–100) |
 | `SEARCH_POPULARITY_PERCENT` | No | `15` | Weight for play count / rating (0–100) |
@@ -296,13 +292,7 @@ brew install opus
 
 ### Slow stream startup (Octo Fiesta / Navidrome)
 
-Some backends delay the first bytes of a stream. Increase pre-buffer time:
-
-```
-AUDIO_BUFFER_START_SECONDS=5
-```
-
-If streams still fail, check Subsonic logs and verify `stream.view` works in a browser with the same credentials.
+Some backends delay the first bytes of a stream. Melody waits up to 30 seconds for FFmpeg to produce the first PCM frame. If playback still fails, check Subsonic logs and verify `stream.view` works in a browser with the same credentials.
 
 ### Mumble connection denied
 

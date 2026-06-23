@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable
 
 from melody.logging import get_logger
 from melody.models import PlaybackState, PlaybackStatus, QueueItem, Track
-from melody.playback.buffer import GlobalBufferPool
 from melody.playback.ffmpeg import FRAME_DURATION_SEC, FFmpegTranscoder
 from melody.playback.pcm_pacer import PcmPacer
 from melody.playback.queue import QueueManager
@@ -29,9 +28,7 @@ class PlaybackEngine:
         self,
         subsonic: ISubsonicClient,
         queue: QueueManager,
-        buffer_pool: GlobalBufferPool,
         *,
-        start_seconds: float,
         starting_volume_percent: int = DEFAULT_VOLUME_PERCENT,
         send_pcm: SendPcmCallback,
         send_pcm_batch: SendPcmBatchCallback | None = None,
@@ -40,8 +37,6 @@ class PlaybackEngine:
     ) -> None:
         self._subsonic = subsonic
         self._queue = queue
-        self._pool = buffer_pool
-        self._start_seconds = start_seconds
         self._send_pcm = send_pcm
         self._send_pcm_batch = send_pcm_batch
         self._get_buffer_size = get_buffer_size
@@ -92,6 +87,23 @@ class PlaybackEngine:
         self._elapsed_seconds = 0.0
         if self._task and not self._task.done():
             self._task.cancel()
+
+    async def wait_stopped(self, timeout: float = 5.0) -> None:
+        """Wait for the playback task and any FFmpeg subprocess to finish."""
+        if self._task is None or self._task.done():
+            return
+        try:
+            await asyncio.wait_for(self._task, timeout=timeout)
+        except asyncio.CancelledError:
+            pass
+        except TimeoutError:
+            logger.warning("Playback task did not stop within %.1fs", timeout)
+            if self._task and not self._task.done():
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
 
     def pause(self) -> None:
         self._pause_event.clear()
@@ -195,7 +207,10 @@ class PlaybackEngine:
             if not pending_batch:
                 return
             first_flush = frames_sent == 0
-            scaled = [self._scale_pcm(chunk) for chunk in pending_batch]
+            if self._volume >= 1.0 - 1e-9:
+                scaled = pending_batch
+            else:
+                scaled = [self._scale_pcm(chunk) for chunk in pending_batch]
             if self._send_pcm_batch and len(scaled) > 1:
                 await self._send_pcm_batch(scaled)
             else:
@@ -219,6 +234,8 @@ class PlaybackEngine:
                 frame = await read_next_frame()
                 if frame is None:
                     break
+                if self._stop_event.is_set():
+                    break
                 await self._pause_event.wait()
                 pending_batch.append(frame)
                 if len(pending_batch) >= prebuffer_batch_size:
@@ -230,14 +247,15 @@ class PlaybackEngine:
                 frame = await read_next_frame()
                 if frame is None:
                     break
+                if self._stop_event.is_set():
+                    break
                 await self._pause_event.wait()
                 pending_batch.append(frame)
                 await flush_batch()
         finally:
             if pending_batch and not self._stop_event.is_set():
                 await flush_batch()
-            code = await transcoder.wait()
-            await transcoder.stop()
+            code = await transcoder.stop()
             if frames_sent == 0:
                 logger.error(
                     "No PCM output for track_id=%s ffmpeg_code=%s stderr=%s",

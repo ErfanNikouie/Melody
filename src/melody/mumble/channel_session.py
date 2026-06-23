@@ -8,7 +8,6 @@ from collections.abc import Awaitable, Callable
 from melody.commands.messages import format_no_previous, format_now_playing, format_queue_end
 from melody.logging import get_logger
 from melody.models import PlaybackStatus, Track
-from melody.playback.buffer import GlobalBufferPool
 from melody.playback.engine import PlaybackEngine
 from melody.playback.queue import QueueManager
 from melody.playback.volume import DEFAULT_VOLUME_PERCENT, apply_volume_pcm, clamp_volume_percent
@@ -35,9 +34,7 @@ class ChannelSession:
         channel_id: int,
         channel_name: str,
         subsonic: ISubsonicClient,
-        buffer_pool: GlobalBufferPool,
         *,
-        start_seconds: float,
         starting_volume_percent: int = DEFAULT_VOLUME_PERCENT,
         grace_period: float,
         send_pcm: SendPcmCallback,
@@ -67,8 +64,6 @@ class ChannelSession:
         self.engine = PlaybackEngine(
             subsonic,
             self.queue,
-            buffer_pool,
-            start_seconds=start_seconds,
             starting_volume_percent=starting_volume_percent,
             send_pcm=send_pcm,
             send_pcm_batch=send_pcm_batch,
@@ -110,6 +105,7 @@ class ChannelSession:
 
     async def stop_playback(self, *, clear_all: bool = False) -> None:
         self.engine.stop()
+        await self.engine.wait_stopped()
         if clear_all:
             self.queue.clear_all()
         else:

@@ -86,8 +86,6 @@ def _make_test_session(*, join_channel) -> ChannelSession:
         5,
         "Music",
         subsonic=object(),  # type: ignore[arg-type]
-        buffer_pool=object(),  # type: ignore[arg-type]
-        start_seconds=1.0,
         grace_period=60.0,
         send_pcm=lambda _: None,  # type: ignore[arg-type, return-value]
         send_pcm_batch=lambda _: None,  # type: ignore[arg-type, return-value]

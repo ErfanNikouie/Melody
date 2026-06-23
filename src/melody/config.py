@@ -25,10 +25,8 @@ class Settings(BaseSettings):
     # Commands
     command_prefixes: str = Field(default="m/,melody/,/", alias="COMMAND_PREFIXES")
 
-    # Playback / buffering
+    # Playback
     disconnect_grace_period: float = Field(default=300.0, alias="DISCONNECT_GRACE_PERIOD")
-    audio_buffer_max_mb: int = Field(default=256, alias="AUDIO_BUFFER_MAX_MB")
-    audio_buffer_start_seconds: float = Field(default=3.0, alias="AUDIO_BUFFER_START_SECONDS")
     starting_volume: int = Field(default=100, alias="STARTING_VOLUME")
 
     # Search ranking (must sum to 100)
@@ -101,10 +99,6 @@ class Settings(BaseSettings):
         """Return command prefixes sorted longest-first for greedy matching."""
         parts = [p.strip() for p in self.command_prefixes.split(",") if p.strip()]
         return sorted(parts, key=len, reverse=True)
-
-    @property
-    def audio_buffer_max_bytes(self) -> int:
-        return self.audio_buffer_max_mb * 1024 * 1024
 
 
 def get_settings() -> Settings:

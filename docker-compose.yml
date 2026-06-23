@@ -8,11 +8,6 @@ services:
     extra_hosts:
       # Reach Murmur, Navidrome, etc. via the host's published ports
       - "host.docker.internal:host-gateway"
-    volumes:
-      - melody-buffer:/tmp/melody-buffer
     read_only: false
     tmpfs:
       - /tmp:size=64M
-
-volumes:
-  melody-buffer:

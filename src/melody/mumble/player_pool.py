@@ -11,7 +11,6 @@ from melody.models import PlayerMode
 from melody.mumble.channel_session import ChannelSession
 from melody.mumble.connection import MumbleConnection
 from melody.mumble.pymumble_util import sanitize_username_part
-from melody.playback.buffer import GlobalBufferPool
 from melody.protocols import ISubsonicClient
 
 logger = get_logger(__name__)
@@ -51,13 +50,11 @@ class PlayerPool:
         self,
         settings: Settings,
         subsonic: ISubsonicClient,
-        buffer_pool: GlobalBufferPool,
         *,
         on_release: ReleaseCallback | None = None,
     ) -> None:
         self._settings = settings
         self._subsonic = subsonic
-        self._buffer_pool = buffer_pool
         self._on_release = on_release
         self._on_player_created: PlayerCreatedCallback | None = None
         self._lock = asyncio.Lock()
@@ -109,8 +106,6 @@ class PlayerPool:
                     channel_id,
                     channel_name,
                     self._subsonic,
-                    self._buffer_pool,
-                    start_seconds=self._settings.audio_buffer_start_seconds,
                     starting_volume_percent=self._settings.starting_volume,
                     grace_period=self._settings.disconnect_grace_period,
                     send_pcm=connection.send_pcm,

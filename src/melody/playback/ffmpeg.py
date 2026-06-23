@@ -16,6 +16,7 @@ BYTES_PER_SAMPLE = 2
 # 40 ms frames align with Mumble's typical audio packet size and reduce overhead.
 FRAME_DURATION_SEC = 0.04
 PCM_FRAME_BYTES = int(SAMPLE_RATE * FRAME_DURATION_SEC * CHANNELS * BYTES_PER_SAMPLE)
+_MAX_STDERR_LINES = 50
 
 
 def find_ffmpeg() -> str:
@@ -125,6 +126,8 @@ class FFmpegTranscoder:
             text = line.decode(errors="replace").strip()
             if text:
                 self._stderr_lines.append(text)
+                if len(self._stderr_lines) > _MAX_STDERR_LINES:
+                    del self._stderr_lines[:-_MAX_STDERR_LINES]
 
     async def write(self, data: bytes) -> None:
         if self._process is None or self._process.stdin is None:
@@ -167,16 +170,25 @@ class FFmpegTranscoder:
     def stderr_summary(self) -> str:
         return "; ".join(self._stderr_lines[-5:])
 
-    async def stop(self) -> None:
+    async def stop(self) -> int:
+        """Terminate FFmpeg if needed and release subprocess resources."""
         if self._process is None:
-            return
-        if self._process.returncode is None:
-            self._process.terminate()
+            return -1
+        proc = self._process
+        if proc.returncode is None:
+            proc.terminate()
             try:
-                await asyncio.wait_for(self._process.wait(), timeout=5.0)
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
             except TimeoutError:
-                self._process.kill()
-                await self._process.wait()
+                proc.kill()
+                await proc.wait()
         if self._stderr_task and not self._stderr_task.done():
             self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except asyncio.CancelledError:
+                pass
+        code = proc.returncode if proc.returncode is not None else -1
         self._process = None
+        self._stderr_task = None
+        return code

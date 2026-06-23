@@ -103,3 +103,15 @@ def test_shuffle_only_upcoming() -> None:
     assert q.current.track.id == current_id
     upcoming_ids = {i.track.id for i in q.upcoming}
     assert upcoming_ids == {"2", "3", "4"}
+
+
+def test_history_is_capped() -> None:
+    from melody.playback.queue import MAX_QUEUE_HISTORY
+
+    q = QueueManager()
+    total = MAX_QUEUE_HISTORY + 25
+    q.play_now([_item(str(i)) for i in range(total)])
+    for _ in range(total - 1):
+        q.on_track_finished()
+    assert len(q.history) == MAX_QUEUE_HISTORY
+    assert q.history[0].track.id == str(25)

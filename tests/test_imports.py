@@ -20,7 +20,6 @@ _LAYERED_MODULES = (
     "melody.subsonic.search",
     "melody.subsonic.client",
     "melody.playback.queue",
-    "melody.playback.buffer",
     "melody.playback.ffmpeg",
     "melody.playback.engine",
     "melody.services.search",

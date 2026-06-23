@@ -7,12 +7,15 @@ from collections import deque
 
 from melody.models import QueueItem, RepeatMode, Track
 
+# Cap history so long sessions do not retain every played track forever.
+MAX_QUEUE_HISTORY = 200
+
 
 class QueueManager:
     """Manages history, current track, and upcoming queue for one channel."""
 
     def __init__(self) -> None:
-        self._history: list[QueueItem] = []
+        self._history: deque[QueueItem] = deque(maxlen=MAX_QUEUE_HISTORY)
         self._current: QueueItem | None = None
         self._upcoming: deque[QueueItem] = deque()
         self._repeat_mode = RepeatMode.OFF
@@ -71,6 +74,7 @@ class QueueManager:
     ) -> QueueItem | None:
         """Replace queue with new items; return first item to play."""
         self.clear()
+        self.clear_history()
         self._source_playlist_id = source_playlist_id
         self._source_playlist_tracks = list(source_tracks or [])
         self._source_album_id = source_album_id
