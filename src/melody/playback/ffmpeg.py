@@ -185,6 +185,11 @@ class FFmpegTranscoder:
         if self._process is None:
             return -1
         proc = self._process
+        if proc.stdout is not None:
+            try:
+                proc.stdout.feed_eof()
+            except (AttributeError, OSError):
+                pass
         if proc.returncode is None:
             proc.terminate()
             try:

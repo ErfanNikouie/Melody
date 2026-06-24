@@ -76,6 +76,7 @@ class MumbleOrchestrator:
         return self._coordinator.connection.is_connected
 
     async def _on_player_released(self, channel_id: int) -> None:
+        self._command_locks.pop(channel_id, None)
         await self._shutdown_player_listener(channel_id)
 
     async def _shutdown_player_listener(self, channel_id: int) -> None:

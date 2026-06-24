@@ -84,12 +84,15 @@ def test_repeat_all_refills_playlist() -> None:
     tracks = [_track("a"), _track("b")]
     items = [QueueItem(track=t, source_playlist_id="pl1") for t in tracks]
     q = QueueManager()
-    q.play_now(items, source_playlist_id="pl1", source_tracks=tracks)
+    q.play_now(items, source_playlist_id="pl1")
     q.set_repeat_mode(RepeatMode.ALL)
     q.on_track_finished()  # a finished -> now playing b
-    nxt = q.on_track_finished()  # b finished -> playlist refills -> now playing a
-    assert nxt is not None
-    assert nxt.track.id == "a"
+    nxt = q.on_track_finished()  # b finished -> needs Subsonic refill
+    assert nxt is None
+    assert q.needs_repeat_refill
+    refilled = q.refill_after_repeat(items)
+    assert refilled is not None
+    assert refilled.track.id == "a"
     assert q.current is not None
     assert q.current.track.id == "a"
 
@@ -103,6 +106,15 @@ def test_shuffle_only_upcoming() -> None:
     assert q.current.track.id == current_id
     upcoming_ids = {i.track.id for i in q.upcoming}
     assert upcoming_ids == {"2", "3", "4"}
+
+
+def test_upcoming_is_capped() -> None:
+    from melody.playback.queue import MAX_UPCOMING
+
+    q = QueueManager()
+    items = [_item(str(i)) for i in range(MAX_UPCOMING + 50)]
+    q.play_now(items)
+    assert len(q.upcoming) == MAX_UPCOMING - 1  # first track is current
 
 
 def test_history_is_capped() -> None:

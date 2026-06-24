@@ -134,6 +134,9 @@ class PlaybackEngine:
             except asyncio.CancelledError:
                 pass
 
+        if self._queue.needs_repeat_refill:
+            await self._refill_repeat_from_subsonic()
+
         self._stop_event = asyncio.Event()
         self._pause_event.set()
         self._announce_next_track = announce
@@ -165,9 +168,38 @@ class PlaybackEngine:
                 return
 
             nxt = self._queue.on_track_finished()
+            if nxt is None and self._queue.needs_repeat_refill:
+                nxt = await self._refill_repeat_from_subsonic()
             if nxt is None:
                 self._state = PlaybackState.IDLE
                 return
+
+    async def _refill_repeat_from_subsonic(self) -> QueueItem | None:
+        queue = self._queue
+        items: list[QueueItem] = []
+        try:
+            if queue.source_album_id:
+                album = await self._subsonic.get_album(queue.source_album_id)
+                items = [
+                    QueueItem(track=t, source_album_id=queue.source_album_id)
+                    for t in album.tracks
+                    if t.id
+                ]
+            elif queue.source_playlist_id:
+                playlist = await self._subsonic.get_playlist(queue.source_playlist_id)
+                items = [
+                    QueueItem(track=t, source_playlist_id=queue.source_playlist_id)
+                    for t in playlist.tracks
+                    if t.id
+                ]
+        except Exception:
+            logger.exception(
+                "Repeat-all refill failed album_id=%s playlist_id=%s",
+                queue.source_album_id,
+                queue.source_playlist_id,
+            )
+            return None
+        return queue.refill_after_repeat(items)
 
     async def _play_item(self, item: QueueItem) -> None:
         track = item.track

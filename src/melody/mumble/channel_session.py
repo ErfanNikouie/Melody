@@ -124,10 +124,11 @@ class ChannelSession:
         else:
             self.queue.clear()
 
-    def replace_playback(self) -> None:
-        """Stop playback and clear the queue without waiting for FFmpeg teardown."""
+    async def replace_playback(self) -> None:
+        """Stop playback and clear the queue; wait briefly for FFmpeg teardown."""
         self.engine.stop()
         self.queue.clear_all()
+        await self.engine.wait_stopped(timeout=2.0)
 
     def pause(self) -> None:
         self.engine.pause()

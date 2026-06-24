@@ -9,6 +9,8 @@ from melody.models import QueueItem, RepeatMode, Track
 
 # Cap history so long sessions do not retain every played track forever.
 MAX_QUEUE_HISTORY = 200
+# Cap upcoming tracks so repeated queue commands cannot grow RAM without bound.
+MAX_UPCOMING = 500
 
 
 class QueueManager:
@@ -21,9 +23,7 @@ class QueueManager:
         self._repeat_mode = RepeatMode.OFF
         self._shuffle_enabled = False
         self._source_playlist_id: str | None = None
-        self._source_playlist_tracks: list[Track] = []
         self._source_album_id: str | None = None
-        self._source_album_tracks: list[Track] = []
 
     @property
     def current(self) -> QueueItem | None:
@@ -46,8 +46,26 @@ class QueueManager:
         return self._shuffle_enabled
 
     @property
+    def source_playlist_id(self) -> str | None:
+        return self._source_playlist_id
+
+    @property
+    def source_album_id(self) -> str | None:
+        return self._source_album_id
+
+    @property
     def is_idle(self) -> bool:
         return self._current is None and not self._upcoming
+
+    @property
+    def needs_repeat_refill(self) -> bool:
+        """True when repeat-all is on but upcoming is empty and a source id exists."""
+        return (
+            self._repeat_mode == RepeatMode.ALL
+            and not self._upcoming
+            and self._current is None
+            and (self._source_album_id is not None or self._source_playlist_id is not None)
+        )
 
     def set_repeat(self, enabled: bool) -> None:
         self._repeat_mode = RepeatMode.TRACK if enabled else RepeatMode.OFF
@@ -68,21 +86,17 @@ class QueueManager:
         items: list[QueueItem],
         *,
         source_playlist_id: str | None = None,
-        source_tracks: list[Track] | None = None,
         source_album_id: str | None = None,
-        source_album_tracks: list[Track] | None = None,
     ) -> QueueItem | None:
         """Replace queue with new items; return first item to play."""
         self.clear()
         self.clear_history()
         self._source_playlist_id = source_playlist_id
-        self._source_playlist_tracks = list(source_tracks or [])
         self._source_album_id = source_album_id
-        self._source_album_tracks = list(source_album_tracks or [])
         if not items:
             return None
         self._current = items[0]
-        self._upcoming.extend(items[1:])
+        self._extend_upcoming(items[1:])
         if self._shuffle_enabled:
             self._shuffle_upcoming()
         return self._current
@@ -92,42 +106,44 @@ class QueueManager:
         items: list[QueueItem],
         *,
         source_playlist_id: str | None = None,
-        source_tracks: list[Track] | None = None,
         source_album_id: str | None = None,
-        source_album_tracks: list[Track] | None = None,
     ) -> QueueItem | None:
         """Add items to queue. Start playback if idle."""
         if source_playlist_id:
             self._source_playlist_id = source_playlist_id
-        if source_tracks:
-            self._source_playlist_tracks = list(source_tracks)
         if source_album_id:
             self._source_album_id = source_album_id
-        if source_album_tracks:
-            self._source_album_tracks = list(source_album_tracks)
 
         if not items:
             return self._current
 
         if self._current is None:
             self._current = items[0]
-            self._upcoming.extend(items[1:])
+            self._extend_upcoming(items[1:])
             if self._shuffle_enabled:
                 self._shuffle_upcoming()
             return self._current
 
-        self._upcoming.extend(items)
+        self._extend_upcoming(items)
         if self._shuffle_enabled:
             self._shuffle_upcoming()
         return self._current
+
+    def refill_after_repeat(self, items: list[QueueItem]) -> QueueItem | None:
+        """Refill upcoming from Subsonic for repeat-all; return new current track."""
+        self._extend_upcoming(items)
+        if self._shuffle_enabled:
+            self._shuffle_upcoming()
+        if self._upcoming:
+            self._current = self._upcoming.popleft()
+            return self._current
+        return None
 
     def clear(self) -> None:
         self._upcoming.clear()
         self._current = None
         self._source_playlist_id = None
-        self._source_playlist_tracks = []
         self._source_album_id = None
-        self._source_album_tracks = []
 
     def clear_all(self) -> None:
         """Clear queue, current, and history."""
@@ -152,10 +168,8 @@ class QueueManager:
             return self._current
 
         if self._repeat_mode == RepeatMode.ALL:
-            self._refill_from_source()
-            if self._upcoming:
-                self._current = self._upcoming.popleft()
-                return self._current
+            self._current = None
+            return None
 
         self._current = None
         return None
@@ -186,36 +200,19 @@ class QueueManager:
             return self._current
 
         if self._repeat_mode == RepeatMode.ALL:
-            self._refill_from_source()
-            if self._upcoming:
-                self._current = self._upcoming.popleft()
-                return self._current
+            self._current = None
+            return None
 
         self._current = None
         return None
 
-    def _refill_from_source(self) -> None:
-        if self._source_album_tracks:
-            items = [
-                QueueItem(track=t, source_album_id=self._source_album_id)
-                for t in self._source_album_tracks
-            ]
-            self._upcoming.extend(items)
-            if self._shuffle_enabled:
-                self._shuffle_upcoming()
+    def _extend_upcoming(self, items: list[QueueItem]) -> None:
+        if not items:
             return
-        self._refill_from_playlist()
-
-    def _refill_from_playlist(self) -> None:
-        if not self._source_playlist_tracks:
+        room = MAX_UPCOMING - len(self._upcoming)
+        if room <= 0:
             return
-        items = [
-            QueueItem(track=t, source_playlist_id=self._source_playlist_id)
-            for t in self._source_playlist_tracks
-        ]
-        self._upcoming.extend(items)
-        if self._shuffle_enabled:
-            self._shuffle_upcoming()
+        self._upcoming.extend(items[:room])
 
     def _shuffle_upcoming(self) -> None:
         upcoming = list(self._upcoming)

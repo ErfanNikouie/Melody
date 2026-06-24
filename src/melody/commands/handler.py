@@ -173,7 +173,7 @@ class CommandHandler:
         search_task: SearchTask | None = None,
     ) -> None:
         started = time.monotonic()
-        session.replace_playback()
+        await session.replace_playback()
         await feedback(format_searching())
 
         search_started = time.monotonic()
@@ -308,18 +308,12 @@ class CommandHandler:
             playlist_id = match.playlist.id
             tracks = [t for t in match.playlist.tracks if t.id]
             items = [QueueItem(track=t, source_playlist_id=playlist_id) for t in tracks]
-            return items, {
-                "source_playlist_id": playlist_id,
-                "source_tracks": tracks,
-            }
+            return items, {"source_playlist_id": playlist_id}
 
         if match.album and match.album.tracks:
             album_id = match.album.id
             tracks = [t for t in match.album.tracks if t.id]
             items = [QueueItem(track=t, source_album_id=album_id) for t in tracks]
-            return items, {
-                "source_album_id": album_id,
-                "source_album_tracks": tracks,
-            }
+            return items, {"source_album_id": album_id}
 
         return [], {}

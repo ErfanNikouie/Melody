@@ -39,7 +39,7 @@ class _Session:
         if clear_all:
             self.queue.clear_all()
 
-    def replace_playback(self) -> None:
+    async def replace_playback(self) -> None:
         self.replaced = True
         self.queue.clear_all()
 

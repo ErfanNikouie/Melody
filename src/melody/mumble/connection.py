@@ -93,6 +93,11 @@ class MumbleConnection:
         if self._mumble is not None:
             self._mumble.exit = True
             await asyncio.to_thread(self._mumble.stop)
+        if self._thread is not None and self._thread.is_alive():
+            await asyncio.to_thread(self._thread.join, 3.0)
+        self._mumble = None
+        self._thread = None
+        self._encoder_ready = False
 
     def _run(self) -> None:
         try:

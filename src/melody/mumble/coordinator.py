@@ -29,7 +29,7 @@ class CoordinatorBot:
         self._settings = settings
         self._on_text = on_text
         self._has_player_in_channel = has_player_in_channel or (lambda _cid: False)
-        self._text_queue: asyncio.Queue[ParsedTextMessage] = asyncio.Queue()
+        self._text_queue: asyncio.Queue[ParsedTextMessage] = asyncio.Queue(maxsize=64)
         self._connection = MumbleConnection(
             settings.mumble_host,
             settings.mumble_port,
@@ -63,7 +63,10 @@ class CoordinatorBot:
         await self._connection.whisper_user(session_id, message)
 
     def _enqueue_text(self, message: ParsedTextMessage) -> None:
-        self._text_queue.put_nowait(message)
+        try:
+            self._text_queue.put_nowait(message)
+        except asyncio.QueueFull:
+            logger.warning("Dropped coordinator text message (queue full)")
 
     async def _process_loop(self) -> None:
         while True:
