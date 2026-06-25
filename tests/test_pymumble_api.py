@@ -39,7 +39,7 @@ def test_stereo_players_discard_incoming_voice() -> None:
         Path(__file__).resolve().parents[1] / "src" / "melody" / "mumble" / "connection.py"
     ).read_text(encoding="utf-8")
     assert "disable_incoming_audio(self._mumble)" in source
-    assert "myself.self_deaf = True" in source
+    assert "myself.self_deaf = False" in source
 
 
 def test_clear_callbacks_helper_exists() -> None:

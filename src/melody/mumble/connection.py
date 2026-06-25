@@ -233,7 +233,7 @@ class MumbleConnection:
                 return
             disable_incoming_audio(self._mumble)
             myself.self_mute = False
-            myself.self_deaf = True
+            myself.self_deaf = False
             myself.suppress = False
             try:
                 myself.register()

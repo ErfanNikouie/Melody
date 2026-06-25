@@ -19,6 +19,7 @@ class _Session:
         self.volume = 100
         self.queue = QueueManager()
         self.stop_waited = False
+        self.stop_drained = False
         self.replaced = False
 
     async def send_message(self, text: str) -> None:
@@ -34,10 +35,17 @@ class _Session:
     async def ensure_joined(self) -> bool:
         return True
 
-    async def stop_playback(self, *, clear_all: bool = False) -> None:
+    def begin_stop(self, *, clear_all: bool = False) -> None:
         self.stop_waited = True
         if clear_all:
             self.queue.clear_all()
+
+    def schedule_stop_drain(self) -> None:
+        self.stop_drained = True
+
+    async def stop_playback(self, *, clear_all: bool = False) -> None:
+        self.begin_stop(clear_all=clear_all)
+        self.stop_drained = True
 
     async def replace_playback(self) -> None:
         self.replaced = True
@@ -266,6 +274,21 @@ async def test_album_play_announces_in_channel_when_whispered() -> None:
     assert any("Playing" in text for text in notified)
     assert any("Playing" in text for text in session.messages)
     assert notified[-1] == session.messages[-1]
+
+
+@pytest.mark.asyncio
+async def test_stop_command_replies_before_background_drain() -> None:
+    session = _Session()
+    handler = CommandHandler(search=object())  # type: ignore[arg-type]
+    await handler.handle(
+        ParsedCommand(name="stop", options=CommandOptions(), query=None),
+        session,  # type: ignore[arg-type]
+    )
+
+    assert session.stop_waited
+    assert session.stop_drained
+    assert session.messages == ["⏹️ <b>Stopped</b> — queue cleared"]
+    assert session.queue.is_idle
 
 
 @pytest.mark.asyncio

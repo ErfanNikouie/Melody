@@ -68,6 +68,7 @@ class ChannelSession:
         self._human_count = 0
         self._grace_task: asyncio.Task[None] | None = None
         self._joined = False
+        self._stop_drain_task: asyncio.Task[None] | None = None
 
         self.engine = PlaybackEngine(
             subsonic,
@@ -121,15 +122,43 @@ class ChannelSession:
             logger.error("Mumble Opus encoder not ready channel_id=%s", self.channel_id)
         await self.engine.play_current(announce=announce)
 
-    async def stop_playback(self, *, clear_all: bool = False) -> None:
+    def begin_stop(self, *, clear_all: bool = False) -> None:
+        """Stop playback immediately without waiting for FFmpeg or Mumble teardown."""
         self.engine.stop()
-        if self._clear_send_audio is not None:
-            await self._clear_send_audio()
-        await self.engine.wait_stopped()
         if clear_all:
             self.queue.clear_all()
         else:
             self.queue.clear()
+
+    def schedule_stop_drain(self) -> None:
+        """Finish playback teardown in the background so chat commands stay responsive."""
+        if self._stop_drain_task is not None and not self._stop_drain_task.done():
+            return
+        self._stop_drain_task = asyncio.create_task(
+            self.finish_stop(),
+            name=f"stop-drain-{self.channel_id}",
+        )
+
+    async def finish_stop(self) -> None:
+        """Wait for FFmpeg and clear any unsent Mumble audio."""
+        try:
+            await self.engine.wait_stopped(timeout=2.0)
+            if self._clear_send_audio is not None:
+                try:
+                    await asyncio.wait_for(self._clear_send_audio(), timeout=1.0)
+                except TimeoutError:
+                    logger.warning(
+                        "Clear send audio timed out channel_id=%s",
+                        self.channel_id,
+                    )
+        except Exception:
+            logger.exception("Playback teardown failed channel_id=%s", self.channel_id)
+
+    async def stop_playback(self, *, clear_all: bool = False) -> None:
+        self.begin_stop(clear_all=clear_all)
+        if self._stop_drain_task is not None and not self._stop_drain_task.done():
+            await self._stop_drain_task
+        await self.finish_stop()
 
     async def replace_playback(self) -> None:
         """Stop playback and clear the queue; wait briefly for FFmpeg teardown."""
@@ -204,5 +233,8 @@ class ChannelSession:
 
     async def shutdown(self) -> None:
         self._cancel_grace_timer()
-        await self.stop_playback(clear_all=True)
+        self.begin_stop(clear_all=True)
+        if self._stop_drain_task is not None and not self._stop_drain_task.done():
+            await self._stop_drain_task
+        await self.finish_stop()
         self._joined = False
