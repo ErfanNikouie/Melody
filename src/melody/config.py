@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     # Search ranking (must sum to 100)
     search_relevance_percent: int = Field(default=85, alias="SEARCH_RELEVANCE_PERCENT")
     search_popularity_percent: int = Field(default=15, alias="SEARCH_POPULARITY_PERCENT")
+    search_results_limit: int = Field(default=10, alias="SEARCH_RESULTS_LIMIT")
+    list_window_size: int = Field(default=50, alias="LIST_WINDOW_SIZE")
 
     # Logging
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
@@ -81,6 +83,13 @@ class Settings(BaseSettings):
     def validate_positive_pcm_int(cls, value: int) -> int:
         if value < 1:
             raise ValueError("PCM prebuffer settings must be at least 1")
+        return value
+
+    @field_validator("search_results_limit", "list_window_size")
+    @classmethod
+    def validate_positive_list_int(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("Search/list limits must be at least 1")
         return value
 
     @model_validator(mode="after")

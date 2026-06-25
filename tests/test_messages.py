@@ -101,10 +101,49 @@ def test_format_queue_list_shows_history_and_full_queue() -> None:
     assert "Earlier" in text
     assert "Now" in text
     assert "Track 19" in text
-    assert "… and" not in text
+    assert "Showing" not in text
     assert "✓ 1." in text
     assert "✓ 2." in text
     assert "3." in text
+
+
+def test_format_queue_list_windows_near_end() -> None:
+    history = tuple(
+        QueueItem(track=Track(id=str(i), title=f"Past {i}", artist="Z"))
+        for i in range(40)
+    )
+    current = QueueItem(track=Track(id="40", title="Current", artist="A"))
+    upcoming = tuple(
+        QueueItem(track=Track(id=str(i), title=f"Next {i}", artist="B"))
+        for i in range(41, 60)
+    )
+    text = format_queue_list(
+        history=history,
+        current=current,
+        upcoming=upcoming,
+        window_size=50,
+    )
+    assert "Showing 50 of 60" in text
+    assert "Past 39" in text
+    assert "Current" in text
+    assert "Next 59" in text
+    assert "Past 0" not in text
+    assert "10 earlier" in text
+
+
+def test_format_queue_list_windows_near_start() -> None:
+    history = ()
+    current = QueueItem(track=Track(id="0", title="Current", artist="A"))
+    upcoming = tuple(
+        QueueItem(track=Track(id=str(i), title=f"Next {i}", artist="B"))
+        for i in range(1, 100)
+    )
+    text = format_queue_list(current=current, upcoming=upcoming, window_size=50)
+    assert "Showing 50 of 100" in text
+    assert "Current" in text
+    assert "Next 49" in text
+    assert "Next 99" not in text
+    assert "50 more" in text
 
 
 def test_format_volume_bar() -> None:

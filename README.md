@@ -197,8 +197,8 @@ Commands use a configured prefix:
 
 | Command | Description |
 |---------|-------------|
-| `play [options] [query]` | Stop current playback, clear queue, search, play best match |
-| `queue [options] [query]` | Search and add to queue; starts if idle |
+| `play [options] [query]` | Search and add to queue; starts playback if idle |
+| `search [options] [query]` | Show top search results without playing |
 | `stop` | Stop playback, clear queue and history |
 | `pause` | Pause playback |
 | `resume` | Resume playback |
@@ -217,8 +217,8 @@ Commands use a configured prefix:
 | `-t`, `--track` | Search tracks only (default when no type is specified) |
 | `-p`, `--playlist` | Search playlists only |
 | `-a`, `--album` | Search albums and queue every track from the best match |
-| `-r`, `--repeat` | Enable repeat (track, playlist, or album) |
-| `-s`, `--shuffle` | Shuffle upcoming queue |
+| `-r`, `--repeat` | Enable repeat (track, playlist, or album; `play` only) |
+| `-s`, `--shuffle` | Shuffle upcoming queue (`play` only) |
 
 Options may appear before or after the query.
 
@@ -226,22 +226,24 @@ Melody uses **HTML formatting** in chat replies (colors, bold, emoji). Your Mumb
 
 ### Search ranking
 
-Results for `play` and `queue` combine **relevance** (title/artist/album match) and **popularity** (`playCount` / `userRating` from your Subsonic server, when available). Tune the balance in `.env`:
+Results for `play` and `search` combine **relevance** (title/artist/album match) and **popularity** (`playCount` / `userRating` from your Subsonic server, when available). Tune the balance in `.env`:
 
 ```env
 SEARCH_RELEVANCE_PERCENT=85
 SEARCH_POPULARITY_PERCENT=15
+SEARCH_RESULTS_LIMIT=10
+LIST_WINDOW_SIZE=50
 ```
 
-Both values must sum to **100**. Higher relevance favors exact matches; higher popularity favors tracks and albums you play more often.
+Both relevance and popularity values must sum to **100**. Higher relevance favors exact matches; higher popularity favors tracks and albums you play more often. `LIST_WINDOW_SIZE` limits how many tracks `list` shows around the current track (default 50).
 
 ### Multi-line commands
 
 Send several commands in one message — each line is parsed separately:
 
 ```
-m/queue song one
-m/queue song two
+m/play song one
+m/play song two
 m/list
 ```
 
@@ -260,10 +262,10 @@ Volume applies to the channel's player immediately and persists for that session
 
 ```
 m/play never gonna give you up
-melody/queue --playlist workout
+m/search -p workout
 m/play -a dark side of the moon
 /play -t queen bohemian rhapsody
-m/queue -r -s rock classics
+m/play -r -s rock classics
 m/list
 m/current
 m/help

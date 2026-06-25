@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
+from html import unescape
+
 from melody.models import CommandOptions, ParsedCommand
 
 KNOWN_COMMANDS = frozenset(
     {
         "play",
-        "queue",
+        "search",
         "stop",
         "pause",
         "resume",
@@ -34,6 +37,8 @@ OPTION_MAP: dict[str, str] = {
     "-s": "shuffle",
     "--shuffle": "shuffle",
 }
+
+_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
 
 class CommandParser:
@@ -70,11 +75,25 @@ class CommandParser:
     def parse_all(self, message: str) -> list[ParsedCommand]:
         """Parse each non-empty line as a separate command."""
         commands: list[ParsedCommand] = []
-        for line in message.splitlines():
+        for line in _split_message_lines(message):
             command = self.parse(line)
+            if command is None:
+                command = self._parse_bare_command_line(line)
             if command is not None:
                 commands.append(command)
         return commands
+
+    def _parse_bare_command_line(self, line: str) -> ParsedCommand | None:
+        """Parse lines like ``volume 50`` when sent without a prefix on the next line."""
+        tokens = line.split()
+        if not tokens:
+            return None
+        command_name = tokens[0].lower()
+        if command_name not in KNOWN_COMMANDS:
+            return None
+        options, query_tokens = self._extract_options(tokens[1:])
+        query = " ".join(query_tokens).strip() or None
+        return ParsedCommand(name=command_name, options=options, query=query)
 
     def _match_prefix(self, text: str) -> str | None:
         lower = text.lower()
@@ -101,3 +120,12 @@ class CommandParser:
                 query_tokens.append(token)
 
         return CommandOptions(**flags), query_tokens
+
+
+def _split_message_lines(message: str) -> list[str]:
+    """Split a Mumble message into logical lines (plain, HTML, or CRLF)."""
+    text = unescape(message)
+    text = _BR_RE.sub("\n", text)
+    for separator in ("\r\n", "\r", "\u2028", "\u2029"):
+        text = text.replace(separator, "\n")
+    return [line.strip() for line in text.split("\n") if line.strip()]

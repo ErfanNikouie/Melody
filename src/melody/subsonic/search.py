@@ -188,6 +188,66 @@ def rank_albums(
     return SearchMatch(kind="album", score=score(best), album=best)
 
 
+def rank_tracks_top(
+    query: str,
+    tracks: list[Track],
+    weights: SearchWeights = DEFAULT_SEARCH_WEIGHTS,
+    *,
+    limit: int = 10,
+) -> list[SearchMatch]:
+    if not tracks or limit <= 0:
+        return []
+    max_play = _max_play_count(tracks)
+
+    def score(track: Track) -> int:
+        rel = relevance_score_track(query, track)
+        pop = popularity_score(track, max_play)
+        return combined_score(rel, pop, weights)
+
+    ranked = sorted(tracks, key=score, reverse=True)[:limit]
+    return [SearchMatch(kind="track", score=score(track), track=track) for track in ranked]
+
+
+def rank_playlists_top(
+    query: str,
+    playlists: list[Playlist],
+    weights: SearchWeights = DEFAULT_SEARCH_WEIGHTS,
+    *,
+    limit: int = 10,
+) -> list[SearchMatch]:
+    if not playlists or limit <= 0:
+        return []
+    max_songs = max((p.song_count for p in playlists), default=0)
+
+    def score(playlist: Playlist) -> int:
+        rel = relevance_score_playlist(query, playlist)
+        pop = playlist_popularity_score(playlist, max_songs)
+        return combined_score(rel, pop, weights)
+
+    ranked = sorted(playlists, key=score, reverse=True)[:limit]
+    return [SearchMatch(kind="playlist", score=score(playlist), playlist=playlist) for playlist in ranked]
+
+
+def rank_albums_top(
+    query: str,
+    albums: list[Album],
+    weights: SearchWeights = DEFAULT_SEARCH_WEIGHTS,
+    *,
+    limit: int = 10,
+) -> list[SearchMatch]:
+    if not albums or limit <= 0:
+        return []
+    max_play = _max_play_count(albums)
+
+    def score(album: Album) -> int:
+        rel = relevance_score_album(query, album)
+        pop = popularity_score(album, max_play)
+        return combined_score(rel, pop, weights)
+
+    ranked = sorted(albums, key=score, reverse=True)[:limit]
+    return [SearchMatch(kind="album", score=score(album), album=album) for album in ranked]
+
+
 # Backwards-compatible aliases for tests
 score_track = relevance_score_track
 score_playlist = relevance_score_playlist

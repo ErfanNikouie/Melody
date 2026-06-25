@@ -11,7 +11,6 @@ from melody.commands.messages import (
     format_need_query,
     format_no_playable,
     format_no_results,
-    format_now_playing,
     format_paused,
     format_playback_status,
     format_playing,
@@ -19,6 +18,7 @@ from melody.commands.messages import (
     format_queued,
     format_resumed,
     format_search_failed,
+    format_search_results,
     format_searching,
     format_stopped,
     format_volume,
@@ -40,15 +40,22 @@ SearchTask = asyncio.Task[SearchMatch | None]
 class CommandHandler:
     """Executes bot commands for a channel session."""
 
-    def __init__(self, search: SearchService, *, command_prefix: str = "m/") -> None:
+    def __init__(
+        self,
+        search: SearchService,
+        *,
+        command_prefix: str = "m/",
+        list_window_size: int = 50,
+    ) -> None:
         self._search = search
         self._command_prefix = command_prefix
+        self._list_window_size = list_window_size
 
     def start_search_tasks(self, commands: list[ParsedCommand]) -> dict[int, SearchTask]:
         """Start Subsonic resolve tasks in parallel with player acquisition."""
         tasks: dict[int, SearchTask] = {}
         for index, command in enumerate(commands):
-            if command.name in ("play", "queue") and command.query:
+            if command.name == "play" and command.query:
                 tasks[index] = asyncio.create_task(
                     self._search.resolve(command.query, command.options),
                     name=f"search-{command.name}-{index}",
@@ -72,7 +79,7 @@ class CommandHandler:
             else:
                 await session.send_message(text)
 
-        if name in ("play", "queue") and not command.query:
+        if name in ("play", "search") and not command.query:
             await feedback(format_need_query())
             return False
 
@@ -80,8 +87,8 @@ class CommandHandler:
             await self._handle_play(session, command, feedback, notify=notify, search_task=search_task)
             return False
 
-        if name == "queue":
-            await self._handle_queue(session, command, feedback, notify=notify, search_task=search_task)
+        if name == "search":
+            await self._handle_search(session, command, feedback)
             return False
 
         if name == "stop":
@@ -160,46 +167,11 @@ class CommandHandler:
                 current=queue.current,
                 upcoming=queue.upcoming,
                 status=session.playback_status,
+                window_size=self._list_window_size,
             )
         )
 
     async def _handle_play(
-        self,
-        session: IChannelSession,
-        command: ParsedCommand,
-        feedback: NotifyCallback,
-        *,
-        notify: NotifyCallback | None = None,
-        search_task: SearchTask | None = None,
-    ) -> None:
-        started = time.monotonic()
-        await session.replace_playback()
-        await feedback(format_searching())
-
-        search_started = time.monotonic()
-        match = await self._resolve_match(command, feedback, search_task=search_task)
-        search_ms = (time.monotonic() - search_started) * 1000
-        if match is None:
-            return
-
-        items, collection = self._match_to_queue_items(match)
-        if not items:
-            await feedback(format_no_playable())
-            return
-
-        self._apply_queue_options(session, command, match)
-
-        session.queue.play_now(items, **collection)
-        await self._announce_playback(match, session, feedback, notify=notify)
-        await session.start_playback(announce=False)
-        logger.debug(
-            "Play command finished channel_id=%s search_ms=%.0f total_ms=%.0f",
-            session.channel_id,
-            search_ms,
-            (time.monotonic() - started) * 1000,
-        )
-
-    async def _handle_queue(
         self,
         session: IChannelSession,
         command: ParsedCommand,
@@ -231,10 +203,30 @@ class CommandHandler:
             await feedback(format_queued(match.display_name, match.track_count))
 
         logger.debug(
-            "Queue command finished channel_id=%s total_ms=%.0f",
+            "Play command finished channel_id=%s total_ms=%.0f",
             session.channel_id,
             (time.monotonic() - started) * 1000,
         )
+
+    async def _handle_search(
+        self,
+        session: IChannelSession,
+        command: ParsedCommand,
+        feedback: NotifyCallback,
+    ) -> None:
+        await feedback(format_searching())
+        try:
+            results = await self._search.search_top(command.query or "", command.options)
+        except SubsonicError as exc:
+            logger.error("Search failed query=%r: %s", command.query, exc)
+            await feedback(format_search_failed())
+            return
+
+        if not results:
+            await feedback(format_no_results())
+            return
+
+        await feedback(format_search_results(results))
 
     async def _resolve_match(
         self,

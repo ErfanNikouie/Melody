@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from html import escape
 
-from melody.models import PlaybackState, PlaybackStatus, QueueItem, Track
+from melody.models import PlaybackState, PlaybackStatus, QueueItem, SearchMatch, Track
 
 _NOW_PLAYING_COLOR = "#6ab7ff"
 _ACCENT_COLOR = "#b0bec5"
@@ -165,61 +165,127 @@ def format_no_previous() -> str:
     return "⏮️ <b>No previous track</b>"
 
 
+def format_search_results(results: list[SearchMatch]) -> str:
+    lines = [
+        f'🔍 <b>Search results</b> <span style="color:{_ACCENT_COLOR}">({len(results)})</span>',
+        "─" * 24,
+    ]
+    for index, match in enumerate(results, start=1):
+        name = _e(match.display_name)
+        if match.kind == "album":
+            detail = f"💿 {name}"
+            if match.track_count > 1:
+                detail += f' <span style="color:{_ACCENT_COLOR}">({match.track_count} tracks)</span>'
+        elif match.kind == "playlist":
+            detail = f"📋 {name}"
+            if match.track_count > 1:
+                detail += f' <span style="color:{_ACCENT_COLOR}">({match.track_count} tracks)</span>'
+        else:
+            detail = name
+        lines.append(f'<span style="color:{_ACCENT_COLOR}">{index}.</span> {detail}')
+    return "<br/>".join(lines)
+
+
+def _list_window_bounds(total: int, current_index: int, window_size: int) -> tuple[int, int]:
+    """Return slice [start, end) indices centered on current when possible."""
+    if total <= window_size:
+        return 0, total
+
+    before = (window_size - 1) // 2
+    after = window_size - 1 - before
+    start = current_index - before
+    end = current_index + after + 1
+
+    if start < 0:
+        return 0, window_size
+    if end > total:
+        return total - window_size, total
+    return start, end
+
+
 def format_queue_list(
     *,
     history: tuple[QueueItem, ...] = (),
     current: QueueItem | None = None,
     upcoming: tuple[QueueItem, ...] = (),
     status: PlaybackStatus | None = None,
+    window_size: int = 50,
 ) -> str:
     if current is None and not upcoming and not history:
         return format_queue_empty()
 
     played = len(history)
-    now = 1 if current is not None else 0
-    next_count = len(upcoming)
-    total = played + now + next_count
+    total = played + (1 if current is not None else 0) + len(upcoming)
 
     lines: list[str] = []
-    lines.append(
+    header = (
         f"🎵 <b>Queue</b> <span style=\"color:{_ACCENT_COLOR}\">"
         f"({total} track{'s' if total != 1 else ''}"
     )
     if played:
-        lines[-1] += f", {played} played"
-    lines[-1] += ")</span>"
-    lines.append("─" * 24)
+        header += f", {played} played"
+    header += ")</span>"
+    lines.append(header)
 
-    index = 1
+    anchor = len(history) if current is not None else 0
+    window_start, window_end = _list_window_bounds(total, anchor, window_size)
+    if window_end - window_start < total:
+        shown = window_end - window_start
+        lines[-1] += (
+            f'<br/><span style="color:{_ACCENT_COLOR}">'
+            f"Showing {shown} of {total}</span>"
+        )
+
+    entries: list[tuple[str, QueueItem | None]] = []
     for item in history:
-        lines.append(
-            f'<span style="color:{_ACCENT_COLOR}">✓ {index}.</span> '
-            f"{format_track_line(item.track)}"
-        )
-        index += 1
-
+        entries.append(("history", item))
     if current is not None:
-        if status is not None and status.track is not None and status.is_active:
-            lines.append(format_state_label(status.state))
-            lines.append(
-                f'<span style="color:{_ACCENT_COLOR}">{index}.</span> '
-                f'<span style="color:{_NOW_PLAYING_COLOR}"><b>{format_track_line(status.track)}</b></span>'
-            )
-            lines.append(format_progress_line(status.elapsed_seconds, status.total_seconds))
-        else:
-            lines.append(
-                f'<span style="color:{_ACCENT_COLOR}">{index}.</span> '
-                f'▶️ <span style="color:{_NOW_PLAYING_COLOR}"><b>{format_track_line(current.track)}</b></span>'
-            )
-        index += 1
-        if upcoming:
-            lines.append("─" * 24)
-
+        entries.append(("current", current))
     for item in upcoming:
-        lines.append(
-            f'<span style="color:{_ACCENT_COLOR}">{index}.</span> {format_track_line(item.track)}'
-        )
-        index += 1
+        entries.append(("upcoming", item))
+
+    lines.append("─" * 24)
+    if window_start > 0:
+        lines.append(f'<span style="color:{_ACCENT_COLOR}">… {window_start} earlier</span>')
+
+    visible = entries[window_start:window_end]
+    for offset, (kind, item) in enumerate(visible):
+        position = window_start + offset
+        track_number = position + 1
+        if kind == "history" and item is not None:
+            lines.append(
+                f'<span style="color:{_ACCENT_COLOR}">✓ {track_number}.</span> '
+                f"{format_track_line(item.track)}"
+            )
+            continue
+
+        if kind == "current" and item is not None:
+            if status is not None and status.track is not None and status.is_active:
+                lines.append(format_state_label(status.state))
+                lines.append(
+                    f'<span style="color:{_ACCENT_COLOR}">{track_number}.</span> '
+                    f'<span style="color:{_NOW_PLAYING_COLOR}"><b>{format_track_line(status.track)}</b></span>'
+                )
+                lines.append(format_progress_line(status.elapsed_seconds, status.total_seconds))
+            else:
+                lines.append(
+                    f'<span style="color:{_ACCENT_COLOR}">{track_number}.</span> '
+                    f'▶️ <span style="color:{_NOW_PLAYING_COLOR}"><b>{format_track_line(item.track)}</b></span>'
+                )
+            next_kind = visible[offset + 1][0] if offset + 1 < len(visible) else None
+            if next_kind == "upcoming":
+                lines.append("─" * 24)
+            continue
+
+        if kind == "upcoming" and item is not None:
+            lines.append(
+                f'<span style="color:{_ACCENT_COLOR}">{track_number}.</span> '
+                f"{format_track_line(item.track)}"
+            )
+
+    if window_end < total:
+        remaining = total - window_end
+        lines.append(f'<span style="color:{_ACCENT_COLOR}">… {remaining} more</span>')
 
     return "<br/>".join(lines)
 
@@ -237,8 +303,8 @@ def format_help(prefix: str = "m/") -> str:
         f'<span style="color:{_ACCENT_COLOR}">Prefix: <code>{p}</code> · one command per line</span>',
         "─" * 28,
         "<b>Playback</b>",
-        f"<code>{p}play [opts] query</code> — search &amp; play now",
-        f"<code>{p}queue [opts] query</code> — search &amp; add to queue",
+        f"<code>{p}play [opts] query</code> — search &amp; add to queue",
+        f"<code>{p}search [opts] query</code> — top search results (no playback)",
         f"<code>{p}current</code> — now playing &amp; progress",
         f"<code>{p}stop</code> — stop &amp; clear queue",
         f"<code>{p}pause</code> / <code>{p}resume</code>",
@@ -247,14 +313,15 @@ def format_help(prefix: str = "m/") -> str:
         f"<code>{p}volume [0-100|up|down]</code>",
         f"<code>{p}quit</code> — leave channel",
         "─" * 28,
-        "<b>Search options</b> <span style=\"color:{0}\">(play / queue)</span>".format(_ACCENT_COLOR),
+        "<b>Search options</b> <span style=\"color:{0}\">(play / search)</span>".format(_ACCENT_COLOR),
         "<code>-t</code> tracks (default) · <code>-a</code> album · <code>-p</code> playlist",
-        "<code>-r</code> repeat · <code>-s</code> shuffle",
+        "<code>-r</code> repeat · <code>-s</code> shuffle (play only)",
         "─" * 28,
         "<b>Examples</b>",
         f"<code>{p}play never gonna give you up</code>",
         f"<code>{p}play -a dark side of the moon</code>",
-        f"<code>{p}queue -p workout -r -s</code>",
+        f"<code>{p}search -p workout</code>",
+        f"<code>{p}play -p workout -r -s</code>",
         f"<code>{p}volume 50</code>",
     ]
     return "<br/>".join(lines)

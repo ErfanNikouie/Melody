@@ -35,9 +35,14 @@ class MelodyApp:
                 relevance_percent=settings.search_relevance_percent,
                 popularity_percent=settings.search_popularity_percent,
             ),
+            results_limit=settings.search_results_limit,
         )
         prefix = settings.prefixes[-1] if settings.prefixes else "m/"
-        self._handler = CommandHandler(self._search, command_prefix=prefix)
+        self._handler = CommandHandler(
+            self._search,
+            command_prefix=prefix,
+            list_window_size=settings.list_window_size,
+        )
         self._pool = PlayerPool(settings, self._subsonic)
         self._orchestrator = MumbleOrchestrator(
             settings,

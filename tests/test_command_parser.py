@@ -21,10 +21,10 @@ def test_play_with_m_prefix(parser: CommandParser) -> None:
     assert cmd.options == CommandOptions()
 
 
-def test_queue_with_melody_prefix(parser: CommandParser) -> None:
-    cmd = parser.parse("melody/queue --playlist workout")
+def test_play_with_melody_prefix(parser: CommandParser) -> None:
+    cmd = parser.parse("melody/play --playlist workout")
     assert cmd is not None
-    assert cmd.name == "queue"
+    assert cmd.name == "play"
     assert cmd.options.playlist is True
     assert cmd.query == "workout"
 
@@ -44,11 +44,19 @@ def test_play_track_option_before_query(parser: CommandParser) -> None:
 
 
 def test_multiple_options(parser: CommandParser) -> None:
-    cmd = parser.parse("m/queue -r -s workout mix")
+    cmd = parser.parse("m/play -r -s workout mix")
     assert cmd is not None
     assert cmd.options.repeat is True
     assert cmd.options.shuffle is True
     assert cmd.query == "workout mix"
+
+
+def test_search_command(parser: CommandParser) -> None:
+    cmd = parser.parse("m/search -a dark side")
+    assert cmd is not None
+    assert cmd.name == "search"
+    assert cmd.options.album is True
+    assert cmd.query == "dark side"
 
 
 def test_stop_no_query(parser: CommandParser) -> None:
@@ -60,6 +68,7 @@ def test_stop_no_query(parser: CommandParser) -> None:
 
 def test_unknown_command_returns_none(parser: CommandParser) -> None:
     assert parser.parse("m/skip track") is None
+    assert parser.parse("m/queue song") is None
 
 
 def test_no_prefix_returns_none(parser: CommandParser) -> None:
@@ -107,6 +116,17 @@ def test_parse_all_multiline(parser: CommandParser) -> None:
     commands = parser.parse_all("m/play song one\nm/volume 50\nm/list")
     assert [c.name for c in commands] == ["play", "volume", "list"]
     assert commands[0].query == "song one"
+    assert commands[1].query == "50"
+
+
+def test_parse_all_html_line_breaks(parser: CommandParser) -> None:
+    commands = parser.parse_all("m/play song one<br/>m/volume 50<br>m/list")
+    assert [c.name for c in commands] == ["play", "volume", "list"]
+
+
+def test_parse_all_bare_continuation_lines(parser: CommandParser) -> None:
+    commands = parser.parse_all("m/play song one\nvolume 50\nm/list")
+    assert [c.name for c in commands] == ["play", "volume", "list"]
     assert commands[1].query == "50"
 
 

@@ -24,6 +24,8 @@ def test_search_weights_default() -> None:
     settings = Settings(**_minimal_env())  # type: ignore[arg-type]
     assert settings.search_relevance_percent == 85
     assert settings.search_popularity_percent == 15
+    assert settings.search_results_limit == 10
+    assert settings.list_window_size == 50
 
 
 def test_search_weights_custom() -> None:

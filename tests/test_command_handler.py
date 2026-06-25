@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from melody.commands.handler import CommandHandler
-from melody.models import Album, CommandOptions, ParsedCommand, SearchMatch, Track
+from melody.models import Album, CommandOptions, ParsedCommand, QueueItem, SearchMatch, Track
 from melody.playback.queue import QueueManager
 from melody.subsonic.errors import AlbumNotFoundError
 
@@ -66,14 +66,32 @@ class _Session:
 
 
 class _Search:
-    def __init__(self, match: SearchMatch | None = None, *, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        match: SearchMatch | None = None,
+        *,
+        error: Exception | None = None,
+        results: list[SearchMatch] | None = None,
+    ) -> None:
         self._match = match
         self._error = error
+        self._results = results or []
 
     async def resolve(self, query: str, options: CommandOptions) -> SearchMatch | None:
         if self._error is not None:
             raise self._error
         return self._match
+
+    async def search_top(
+        self,
+        query: str,
+        options: CommandOptions,
+        *,
+        limit: int | None = None,
+    ) -> list[SearchMatch]:
+        if self._error is not None:
+            raise self._error
+        return self._results
 
 
 @pytest.mark.asyncio
@@ -111,7 +129,7 @@ async def test_feedback_uses_channel_when_no_notify() -> None:
 
 
 @pytest.mark.asyncio
-async def test_play_shows_searching_and_does_not_wait_for_stop() -> None:
+async def test_play_shows_searching_and_queues_track() -> None:
     track = Track(id="1", title="Song", artist="Artist")
     match = SearchMatch(kind="track", score=90, track=track)
     session = _Session()
@@ -127,10 +145,27 @@ async def test_play_shows_searching_and_does_not_wait_for_stop() -> None:
         notify=notify,
     )
 
-    assert session.replaced
+    assert not session.replaced
     assert not session.stop_waited
     assert notified[0] == "🔍 <b>Searching</b>…"
     assert any("Playing" in text for text in notified)
+    assert session.queue.current is not None
+
+
+@pytest.mark.asyncio
+async def test_play_when_busy_shows_queued() -> None:
+    track = Track(id="1", title="Song", artist="Artist")
+    match = SearchMatch(kind="track", score=90, track=track)
+    session = _Session()
+    session.queue.enqueue([QueueItem(track=Track(id="0", title="Busy", artist="A"))])
+
+    handler = CommandHandler(search=_Search(match))
+    await handler.handle(
+        ParsedCommand(name="play", options=CommandOptions(), query="song"),
+        session,  # type: ignore[arg-type]
+    )
+
+    assert any("Queued" in text for text in session.messages)
 
 
 @pytest.mark.asyncio
@@ -148,9 +183,26 @@ async def test_play_uses_prefetched_search_task() -> None:
         search_task=task,
     )
 
-    assert session.replaced
+    assert not session.replaced
     assert session.queue.current is not None
     assert session.queue.current.track.id == "1"
+
+
+@pytest.mark.asyncio
+async def test_search_returns_top_results() -> None:
+    tracks = [
+        SearchMatch(kind="track", score=90, track=Track(id=str(i), title=f"Song {i}", artist="A"))
+        for i in range(3)
+    ]
+    session = _Session()
+    handler = CommandHandler(search=_Search(results=tracks))
+    await handler.handle(
+        ParsedCommand(name="search", options=CommandOptions(), query="song"),
+        session,  # type: ignore[arg-type]
+    )
+
+    assert any("Search results" in text for text in session.messages)
+    assert any("Song 0" in text for text in session.messages)
 
 
 @pytest.mark.asyncio
