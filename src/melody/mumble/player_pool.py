@@ -62,6 +62,7 @@ class PlayerPool:
         self._free_slots: list[int] = list(range(1, settings.player_pool_size + 1))
         self._slot_by_channel: dict[int, int] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._occupancy_timers: dict[int, asyncio.TimerHandle] = {}
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -78,6 +79,29 @@ class PlayerPool:
 
     def has_channel(self, channel_id: int) -> bool:
         return channel_id in self._active
+
+    def is_ready(self, channel_id: int) -> bool:
+        """True when a player is connected and can handle channel chat."""
+        player = self._active.get(channel_id)
+        if player is None:
+            return False
+        return player.connection.is_connected
+
+    async def refresh_occupancy(self, channel_id: int) -> None:
+        player = self._active.get(channel_id)
+        if player is None:
+            return
+        count = await asyncio.to_thread(
+            player.connection.count_humans_in,
+            player.channel_id,
+        )
+        player.session.update_human_count(count)
+
+    async def refresh_all_occupancy(self) -> None:
+        async with self._lock:
+            channel_ids = list(self._active.keys())
+        for channel_id in channel_ids:
+            await self.refresh_occupancy(channel_id)
 
     async def acquire(self, channel_id: int, channel_name: str) -> tuple[PlayerBot, bool]:
         created = False
@@ -99,6 +123,7 @@ class PlayerPool:
                     certfile=self._settings.mumble_certfile,
                     keyfile=self._settings.mumble_keyfile,
                     on_text=None,
+                    on_users_changed=self._occupancy_callback(channel_id),
                 )
 
                 async def release_this() -> None:
@@ -121,7 +146,7 @@ class PlayerPool:
                     wait_for_audio_encoder=connection.wait_for_audio_encoder,
                     join_channel=lambda cid=channel_id: connection.join_channel(cid),
                     is_in_channel=lambda cid=channel_id: connection.is_in_channel(cid),
-                    leave_channel=lambda: asyncio.sleep(0),
+                    leave_channel=_noop_leave,
                     send_message=lambda msg, cid=channel_id: connection.send_channel_message(cid, msg),
                     on_shutdown=release_this,
                 )
@@ -136,6 +161,7 @@ class PlayerPool:
 
         if existing is not None:
             await player.session.ensure_joined()
+            await self.refresh_occupancy(channel_id)
             return player, False
 
         try:
@@ -157,6 +183,7 @@ class PlayerPool:
             channel_name,
             len(self._active),
         )
+        await self.refresh_occupancy(channel_id)
         return player, True
 
     async def release(self, channel_id: int) -> None:
@@ -167,6 +194,7 @@ class PlayerPool:
             self._return_slot(channel_id)
 
         player.connection.set_text_handler(None)
+        self._cancel_occupancy_timer(channel_id)
         if self._on_release:
             await self._on_release(channel_id)
         await player.stop()
@@ -204,6 +232,7 @@ class PlayerPool:
             self._return_slot(channel_id)
 
         player.connection.set_text_handler(None)
+        self._cancel_occupancy_timer(channel_id)
         if self._on_release:
             await self._on_release(channel_id)
 
@@ -220,3 +249,33 @@ class PlayerPool:
             return
         self._free_slots.append(slot)
         self._free_slots.sort()
+
+    def _occupancy_callback(self, channel_id: int) -> Callable[[], None]:
+        def on_users_changed() -> None:
+            loop = self._loop
+            if loop is None:
+                return
+            loop.call_soon_threadsafe(lambda: self._debounce_occupancy_refresh(channel_id))
+
+        return on_users_changed
+
+    def _debounce_occupancy_refresh(self, channel_id: int) -> None:
+        loop = self._loop
+        if loop is None:
+            return
+        self._cancel_occupancy_timer(channel_id)
+
+        def fire() -> None:
+            self._occupancy_timers.pop(channel_id, None)
+            asyncio.create_task(self.refresh_occupancy(channel_id))
+
+        self._occupancy_timers[channel_id] = loop.call_later(2.0, fire)
+
+    def _cancel_occupancy_timer(self, channel_id: int) -> None:
+        handle = self._occupancy_timers.pop(channel_id, None)
+        if handle is not None:
+            handle.cancel()
+
+
+async def _noop_leave() -> None:
+    """MelodyPlayer disconnect is handled by MumbleConnection.stop()."""

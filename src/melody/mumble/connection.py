@@ -13,6 +13,7 @@ from melody.mumble.pymumble_util import (
     ParsedTextMessage,
     bind_callbacks,
     clear_callbacks,
+    disable_incoming_audio,
     get_session_id,
     load_pymumble,
     parse_text_message,
@@ -23,6 +24,7 @@ logger = get_logger(__name__)
 TextHandler = Callable[[ParsedTextMessage], None]
 ConnectedHandler = Callable[[], None]
 DisconnectedHandler = Callable[[], None]
+UsersChangedHandler = Callable[[], None]
 
 _MESSAGE_RETRIES = 3
 _MESSAGE_RETRY_DELAY = 0.15
@@ -48,6 +50,7 @@ class MumbleConnection:
         on_text: TextHandler | None = None,
         on_connected: ConnectedHandler | None = None,
         on_disconnected: DisconnectedHandler | None = None,
+        on_users_changed: UsersChangedHandler | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -61,6 +64,7 @@ class MumbleConnection:
         self._on_text = on_text
         self._on_connected_cb = on_connected
         self._on_disconnected_cb = on_disconnected
+        self._on_users_changed_cb = on_users_changed
         self._loop: asyncio.AbstractEventLoop | None = None
         self._mumble: Any = None
         self._thread: threading.Thread | None = None
@@ -123,6 +127,7 @@ class MumbleConnection:
         self._loop = None
         self._on_connected_cb = None
         self._on_disconnected_cb = None
+        self._on_users_changed_cb = None
 
     def _run(self) -> None:
         try:
@@ -155,11 +160,13 @@ class MumbleConnection:
             )
             if self._stereo:
                 self._mumble.set_codec_profile("audio")
+                disable_incoming_audio(self._mumble)
             bind_callbacks(
                 self._mumble,
                 on_text=self._handle_text,
                 on_connected=self._handle_connected,
                 on_disconnected=self._handle_disconnected,
+                on_users_changed=self._on_users_changed_cb,
             )
             self._mumble.start()
             # Do not call wait_until_connected() here: pymumble releases its ready

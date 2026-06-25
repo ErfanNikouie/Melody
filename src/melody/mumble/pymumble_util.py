@@ -37,11 +37,31 @@ def bind_callbacks(
     on_text: Callable[[Any], None],
     on_connected: Callable[[], None],
     on_disconnected: Callable[[], None],
+    on_users_changed: Callable[[], None] | None = None,
 ) -> None:
     """Register pymumble event handlers."""
     mumble.callbacks.text_message_received.set_handler(on_text)
     mumble.callbacks.connected.set_handler(on_connected)
     mumble.callbacks.disconnected.set_handler(on_disconnected)
+    if on_users_changed is not None:
+        mumble.callbacks.user_updated.set_handler(
+            lambda _user, changes: on_users_changed() if "channel_id" in changes else None
+        )
+        mumble.callbacks.user_removed.set_handler(lambda _user, _msg: on_users_changed())
+
+
+def disable_incoming_audio(mumble: Any) -> None:
+    """Transmit-only mode: do not decode or buffer other users' voice in RAM."""
+    mumble.callbacks.sound_received.set_handler(lambda _user, _chunk: None)
+
+    def on_user_created(user: Any) -> None:
+        sound = getattr(user, "sound", None)
+        if sound is not None:
+            sound.set_receive_sound(False)
+
+    mumble.callbacks.user_created.set_handler(on_user_created)
+    for user in mumble.users.by_session().values():
+        on_user_created(user)
 
 
 def clear_callbacks(mumble: Any) -> None:
@@ -50,6 +70,10 @@ def clear_callbacks(mumble: Any) -> None:
         mumble.callbacks.text_message_received.clear_handler()
         mumble.callbacks.connected.clear_handler()
         mumble.callbacks.disconnected.clear_handler()
+        mumble.callbacks.user_updated.clear_handler()
+        mumble.callbacks.user_removed.clear_handler()
+        mumble.callbacks.user_created.clear_handler()
+        mumble.callbacks.sound_received.clear_handler()
     except Exception:
         # Teardown should never fail just because pymumble's callback object is already gone.
         pass

@@ -21,6 +21,7 @@ logger = get_logger(__name__)
 
 NotifyCallback = Callable[[str], Awaitable[None]]
 
+_OCCUPANCY_POLL_INTERVAL = 30.0
 _PLAYER_QUEUE_MAX = 64
 _SHUTDOWN = object()
 
@@ -42,10 +43,11 @@ class MumbleOrchestrator:
         self._coordinator = CoordinatorBot(
             settings,
             on_text=self._on_coordinator_text,
-            has_player_in_channel=pool.has_channel,
+            has_player_in_channel=pool.is_ready,
         )
         self._player_queues: dict[int, asyncio.Queue[ParsedTextMessage | object]] = {}
         self._player_tasks: dict[int, asyncio.Task[None]] = {}
+        self._occupancy_task: asyncio.Task[None] | None = None
         self._command_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         pool.set_on_release(self._on_player_released)
         pool.set_on_player_created(self._ensure_player_listener)
@@ -64,8 +66,16 @@ class MumbleOrchestrator:
                 f"{self._settings.mumble_host}:{self._settings.mumble_port}"
             )
         logger.info("Melody coordinator connected as %s", self._settings.mumble_username)
+        self._occupancy_task = asyncio.create_task(self._occupancy_poll_loop())
 
     async def stop(self) -> None:
+        if self._occupancy_task is not None:
+            self._occupancy_task.cancel()
+            try:
+                await self._occupancy_task
+            except asyncio.CancelledError:
+                pass
+            self._occupancy_task = None
         for channel_id in list(self._player_tasks):
             await self._shutdown_player_listener(channel_id)
         await self._pool.stop_all()
@@ -112,10 +122,9 @@ class MumbleOrchestrator:
 
         try:
             player = await self._acquire_player_for_message(message, notify=notify)
-        except RuntimeError as exc:
+        except Exception as exc:
             await self._cancel_search_tasks(search_tasks)
-            if notify:
-                await notify(str(exc))
+            await self._notify_sender(message, notify, str(exc))
             return
 
         await self._run_commands(commands, player, message, notify=notify, search_tasks=search_tasks)
@@ -130,8 +139,12 @@ class MumbleOrchestrator:
         channel_name = message.sender_channel_name
         spawning = not self._pool.has_channel(channel_id)
 
-        if spawning and notify is not None:
-            await notify(format_joining_channel(channel_name))
+        if spawning:
+            progress = format_joining_channel(channel_name)
+            if notify is not None:
+                await notify(progress)
+            else:
+                await self._notify_sender(message, None, progress)
 
         started = time.monotonic()
         player, _created = await self._pool.acquire(channel_id, channel_name)
@@ -143,6 +156,17 @@ class MumbleOrchestrator:
         )
         self._ensure_player_listener(player)
         return player
+
+    async def _notify_sender(
+        self,
+        message: ParsedTextMessage,
+        notify: NotifyCallback | None,
+        text: str,
+    ) -> None:
+        if notify is not None:
+            await notify(text)
+        elif message.sender_session:
+            await self._coordinator.whisper(message.sender_session, text)
 
     async def _player_message_loop(
         self,
@@ -177,9 +201,10 @@ class MumbleOrchestrator:
 
         try:
             player = await self._acquire_player_for_message(message, notify=None)
-        except RuntimeError as exc:
+        except Exception as exc:
             await self._cancel_search_tasks(search_tasks)
             logger.warning("Failed to acquire player for channel message: %s", exc)
+            await self._notify_sender(message, None, str(exc))
             return
 
         notify: NotifyCallback | None = None
@@ -264,3 +289,12 @@ class MumbleOrchestrator:
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks.values(), return_exceptions=True)
+
+    async def _occupancy_poll_loop(self) -> None:
+        """Release idle players when humans leave without sending another command."""
+        try:
+            while True:
+                await asyncio.sleep(_OCCUPANCY_POLL_INTERVAL)
+                await self._pool.refresh_all_occupancy()
+        except asyncio.CancelledError:
+            pass

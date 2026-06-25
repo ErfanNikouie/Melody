@@ -90,7 +90,7 @@ class CoordinatorBot:
             self._settings.coordinator_accept_root_messages
             and message.target_channel_id == ROOT_CHANNEL_ID
         ):
-            # MelodyPlayer in root handles root channel chat once it is active.
+            # MelodyPlayer in root handles root channel chat once it is connected.
             if self._has_player_in_channel(ROOT_CHANNEL_ID):
                 return False
             return True

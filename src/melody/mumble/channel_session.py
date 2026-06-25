@@ -200,6 +200,4 @@ class ChannelSession:
     async def shutdown(self) -> None:
         self._cancel_grace_timer()
         await self.stop_playback(clear_all=True)
-        if self._joined:
-            await self._leave_channel()
-            self._joined = False
+        self._joined = False

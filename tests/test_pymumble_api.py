@@ -34,13 +34,11 @@ def test_send_audio_replaces_sound_output() -> None:
     assert "sound_output" not in source
 
 
-def test_stereo_players_enable_audio() -> None:
-    """pymumble 2 allocates send_audio when enable_audio is True."""
+def test_stereo_players_discard_incoming_voice() -> None:
     source = (
         Path(__file__).resolve().parents[1] / "src" / "melody" / "mumble" / "connection.py"
     ).read_text(encoding="utf-8")
-    assert "enable_audio=self._stereo" in source
-    assert "client_type=self._client_type" in source
+    assert "disable_incoming_audio(self._mumble)" in source
 
 
 def test_clear_callbacks_helper_exists() -> None:
@@ -54,12 +52,16 @@ def test_clear_callbacks_helper_exists() -> None:
         text_message_received = _Callback()
         connected = _Callback()
         disconnected = _Callback()
+        user_updated = _Callback()
+        user_removed = _Callback()
+        user_created = _Callback()
+        sound_received = _Callback()
 
     from melody.mumble.pymumble_util import clear_callbacks
 
     mumble = type("M", (), {"callbacks": _Callbacks()})()
     clear_callbacks(mumble)
-    assert calls == ["cleared", "cleared", "cleared"]
+    assert calls == ["cleared", "cleared", "cleared", "cleared", "cleared", "cleared", "cleared"]
 
 
 def test_load_pymumble_imports_mumble_module() -> None:
