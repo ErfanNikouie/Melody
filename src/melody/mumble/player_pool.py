@@ -161,9 +161,9 @@ class PlayerPool:
             raise RuntimeError("PlayerPool loop not set")
 
         if existing is not None:
-            await player.session.ensure_joined()
-            await self.refresh_occupancy(channel_id)
-            return player, False
+            if not existing.connection.is_connected:
+                await existing.session.ensure_joined()
+            return existing, False
 
         try:
             await player.start(self._loop)

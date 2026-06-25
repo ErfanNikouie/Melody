@@ -129,6 +129,15 @@ class MumbleOrchestrator:
 
         await self._run_commands(commands, player, message, notify=notify, search_tasks=search_tasks)
 
+    async def _resolve_player_for_message(self, message: ParsedTextMessage) -> PlayerBot:
+        """Return an active player, spawning only when the channel has none."""
+        channel_id = message.sender_channel_id
+        existing = await self._pool.get(channel_id)
+        if existing is not None and existing.connection.is_connected:
+            return existing
+        player, _created = await self._acquire_player_for_message(message, notify=None)
+        return player
+
     async def _acquire_player_for_message(
         self,
         message: ParsedTextMessage,
@@ -140,11 +149,10 @@ class MumbleOrchestrator:
         spawning = not self._pool.has_channel(channel_id)
 
         if spawning:
-            progress = format_joining_channel(channel_name)
-            if notify is not None:
-                await notify(progress)
-            else:
-                await self._notify_sender(message, None, progress)
+            await self._coordinator.send_to_channel(
+                channel_id,
+                format_joining_channel(channel_name),
+            )
 
         started = time.monotonic()
         player, _created = await self._pool.acquire(channel_id, channel_name)
@@ -206,7 +214,7 @@ class MumbleOrchestrator:
         search_tasks = self._handler.start_search_tasks(commands)
 
         try:
-            player = await self._acquire_player_for_message(message, notify=None)
+            player = await self._resolve_player_for_message(message)
         except Exception as exc:
             await self._cancel_search_tasks(search_tasks)
             logger.warning("Failed to acquire player for channel message: %s", exc)
@@ -232,6 +240,7 @@ class MumbleOrchestrator:
     ) -> None:
         tasks = search_tasks or {}
         lock = self._command_locks[player.channel_id]
+        destroy = False
         try:
             async with lock:
                 for index, command in enumerate(commands):
@@ -249,11 +258,17 @@ class MumbleOrchestrator:
                         (time.monotonic() - started) * 1000,
                     )
                     if destroy:
-                        await self._pool.release(player.channel_id)
-                        return
-                    player.session.update_human_count(
-                        player.connection.count_humans_in(player.channel_id)
-                    )
+                        break
+            if destroy:
+                asyncio.create_task(
+                    self._pool.release(player.channel_id),
+                    name=f"release-{player.channel_id}",
+                )
+                return
+            asyncio.create_task(
+                self._refresh_player_occupancy(player),
+                name=f"occupancy-{player.channel_id}",
+            )
         except Exception:
             logger.exception(
                 "Command failed channel_id=%s from=%s",
@@ -266,6 +281,19 @@ class MumbleOrchestrator:
                 await player.session.send_message(format_command_failed())
         finally:
             await self._cancel_search_tasks(tasks)
+
+    async def _refresh_player_occupancy(self, player: PlayerBot) -> None:
+        try:
+            count = await asyncio.to_thread(
+                player.connection.count_humans_in,
+                player.channel_id,
+            )
+            player.session.update_human_count(count)
+        except Exception:
+            logger.exception(
+                "Occupancy refresh failed channel_id=%s",
+                player.channel_id,
+            )
 
     def _ensure_player_listener(self, player: PlayerBot) -> None:
         if player.channel_id in self._player_queues:

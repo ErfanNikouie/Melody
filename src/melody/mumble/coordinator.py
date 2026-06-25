@@ -64,6 +64,9 @@ class CoordinatorBot:
     async def whisper(self, session_id: int, message: str) -> None:
         await self._connection.whisper_user(session_id, message)
 
+    async def send_to_channel(self, channel_id: int, message: str) -> bool:
+        return await self._connection.send_channel_message(channel_id, message)
+
     def _enqueue_text(self, message: ParsedTextMessage) -> None:
         try:
             self._text_queue.put_nowait(message)

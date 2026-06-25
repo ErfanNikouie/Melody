@@ -32,23 +32,14 @@ def format_progress_line(
     *,
     width: int = 14,
 ) -> str:
-    """Stylized elapsed/total with a Unicode progress bar."""
+    """Elapsed/total time display for now-playing views."""
+    _ = width  # kept for call-site compatibility
     elapsed_text = format_duration(elapsed)
     if total is None or total <= 0:
-        return (
-            f'<span style="color:{_ACCENT_COLOR}">{elapsed_text}</span>'
-            f' <span style="color:{_ACCENT_COLOR}">· live</span>'
-        )
-
-    pct = min(1.0, elapsed / total)
-    filled = int(round(pct * width))
-    bar = "█" * filled + "░" * (width - filled)
+        return f'<span style="color:{_ACCENT_COLOR}">{elapsed_text}</span>'
     total_text = format_duration(total)
-    pct_text = int(round(pct * 100))
     return (
-        f'<code>{bar}</code> '
-        f'<span style="color:{_ACCENT_COLOR}">{elapsed_text} / {total_text}</span> '
-        f'<span style="color:{_ACCENT_COLOR}">({pct_text}%)</span>'
+        f'<span style="color:{_ACCENT_COLOR}">{elapsed_text} / {total_text}</span>'
     )
 
 
@@ -106,6 +97,10 @@ def format_queued(match_name: str, track_count: int | None = None) -> str:
 
 def format_stopped() -> str:
     return "⏹️ <b>Stopped</b> — queue cleared"
+
+
+def format_left_channel() -> str:
+    return "👋 <b>Left channel</b>"
 
 
 def format_paused() -> str:

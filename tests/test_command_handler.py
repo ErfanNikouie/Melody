@@ -277,6 +277,19 @@ async def test_album_play_announces_in_channel_when_whispered() -> None:
 
 
 @pytest.mark.asyncio
+async def test_exit_command_replies_before_release() -> None:
+    session = _Session()
+    handler = CommandHandler(search=object())  # type: ignore[arg-type]
+    destroy = await handler.handle(
+        ParsedCommand(name="exit", options=CommandOptions(), query=None),
+        session,  # type: ignore[arg-type]
+    )
+
+    assert destroy
+    assert session.messages == ["👋 <b>Left channel</b>"]
+
+
+@pytest.mark.asyncio
 async def test_stop_command_replies_before_background_drain() -> None:
     session = _Session()
     handler = CommandHandler(search=object())  # type: ignore[arg-type]

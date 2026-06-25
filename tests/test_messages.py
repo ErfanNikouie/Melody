@@ -22,9 +22,9 @@ def test_format_duration() -> None:
 
 def test_format_progress_line_with_total() -> None:
     text = format_progress_line(90, 180, width=10)
-    assert "1:30 / 3:00" in text
-    assert "50%" in text
-    assert "█" in text
+    assert text == '<span style="color:#b0bec5">1:30 / 3:00</span>'
+    assert "█" not in text
+    assert "%" not in text
 
 
 def test_format_playback_status_playing() -> None:
