@@ -180,7 +180,13 @@ class MumbleOrchestrator:
                     break
                 if not isinstance(message, ParsedTextMessage):
                     continue
-                await self._handle_player_text(channel_id, message)
+                try:
+                    await self._handle_player_text(channel_id, message)
+                except Exception:
+                    logger.exception(
+                        "Player listener failed channel_id=%s",
+                        channel_id,
+                    )
         except asyncio.CancelledError:
             pass
         finally:

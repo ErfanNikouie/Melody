@@ -92,8 +92,10 @@ class CommandHandler:
             return False
 
         if name == "stop":
-            await session.stop_playback(clear_all=True)
-            await feedback(format_stopped())
+            try:
+                await session.stop_playback(clear_all=True)
+            finally:
+                await feedback(format_stopped())
             return False
 
         if name == "pause":

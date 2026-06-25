@@ -143,6 +143,7 @@ class PlayerPool:
                     send_pcm=connection.send_pcm,
                     send_pcm_batch=connection.send_pcm_batch,
                     get_buffer_size=connection.get_buffer_size,
+                    clear_send_audio=connection.clear_send_audio,
                     wait_for_audio_encoder=connection.wait_for_audio_encoder,
                     join_channel=lambda cid=channel_id: connection.join_channel(cid),
                     is_in_channel=lambda cid=channel_id: connection.is_in_channel(cid),

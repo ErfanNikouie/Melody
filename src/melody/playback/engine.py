@@ -97,26 +97,33 @@ class PlaybackEngine:
         self._pause_event.set()
         self._active_track = None
         self._elapsed_seconds = 0.0
+        self._state = PlaybackState.IDLE
         if self._task and not self._task.done():
             self._task.cancel()
 
     async def wait_stopped(self, timeout: float = 5.0) -> None:
         """Wait for the playback task and any FFmpeg subprocess to finish."""
-        if self._task is None or self._task.done():
+        await self._stop_active_transcoder()
+        task = self._task
+        if task is None or task.done():
+            self._task = None
+            self._state = PlaybackState.IDLE
             return
         try:
-            await asyncio.wait_for(self._task, timeout=timeout)
+            await asyncio.wait_for(task, timeout=timeout)
         except asyncio.CancelledError:
             pass
         except TimeoutError:
             logger.warning("Playback task did not stop within %.1fs", timeout)
-            await self._stop_active_transcoder()
-            if self._task and not self._task.done():
-                self._task.cancel()
+            if not task.done():
+                task.cancel()
                 try:
-                    await self._task
+                    await task
                 except asyncio.CancelledError:
                     pass
+        finally:
+            self._task = None
+            self._state = PlaybackState.IDLE
 
     async def _stop_active_transcoder(self) -> None:
         transcoder = self._active_transcoder

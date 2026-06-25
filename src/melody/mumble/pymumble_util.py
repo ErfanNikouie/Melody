@@ -50,18 +50,27 @@ def bind_callbacks(
         mumble.callbacks.user_removed.set_handler(lambda _user, _msg: on_users_changed())
 
 
+def _mute_user_incoming_audio(user: Any) -> None:
+    sound = getattr(user, "sound", None)
+    if sound is None:
+        return
+    sound.set_receive_sound(False)
+    lock = getattr(sound, "lock", None)
+    queue = getattr(sound, "queue", None)
+    if lock is not None and queue is not None:
+        lock.acquire()
+        try:
+            queue.clear()
+        finally:
+            lock.release()
+
+
 def disable_incoming_audio(mumble: Any) -> None:
     """Transmit-only mode: do not decode or buffer other users' voice in RAM."""
     mumble.callbacks.sound_received.set_handler(lambda _user, _chunk: None)
-
-    def on_user_created(user: Any) -> None:
-        sound = getattr(user, "sound", None)
-        if sound is not None:
-            sound.set_receive_sound(False)
-
-    mumble.callbacks.user_created.set_handler(on_user_created)
+    mumble.callbacks.user_created.set_handler(_mute_user_incoming_audio)
     for user in mumble.users.by_session().values():
-        on_user_created(user)
+        _mute_user_incoming_audio(user)
 
 
 def clear_callbacks(mumble: Any) -> None:

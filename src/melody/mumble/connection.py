@@ -160,7 +160,6 @@ class MumbleConnection:
             )
             if self._stereo:
                 self._mumble.set_codec_profile("audio")
-                disable_incoming_audio(self._mumble)
             bind_callbacks(
                 self._mumble,
                 on_text=self._handle_text,
@@ -232,8 +231,9 @@ class MumbleConnection:
             if myself is None:
                 logger.warning("Voice setup skipped user=%s (myself unknown)", self._username)
                 return
+            disable_incoming_audio(self._mumble)
             myself.self_mute = False
-            myself.self_deaf = False
+            myself.self_deaf = True
             myself.suppress = False
             try:
                 myself.register()
@@ -511,6 +511,14 @@ class MumbleConnection:
         if self._mumble is None or not self._has_send_audio():
             return 0.0
         return self._mumble.send_audio.get_buffer_size()
+
+    async def clear_send_audio(self) -> None:
+        await asyncio.to_thread(self._clear_send_audio_sync)
+
+    def _clear_send_audio_sync(self) -> None:
+        if self._mumble is None or not self._has_send_audio():
+            return
+        self._mumble.send_audio.clear_buffer()
 
     def count_humans_in(self, channel_id: int) -> int:
         if self._mumble is None:

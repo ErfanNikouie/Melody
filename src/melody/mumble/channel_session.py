@@ -22,6 +22,7 @@ SendMessageCallback = Callable[[str], Awaitable[None]]
 SendPcmCallback = Callable[[bytes], Awaitable[None]]
 SendPcmBatchCallback = Callable[[list[bytes]], Awaitable[None]]
 GetBufferSizeCallback = Callable[[], float]
+ClearSendAudioCallback = Callable[[], Awaitable[None]]
 WaitForAudioEncoderCallback = Callable[[], Awaitable[bool]]
 OnShutdownCallback = Callable[[], Awaitable[None]]
 
@@ -45,6 +46,7 @@ class ChannelSession:
         send_pcm: SendPcmCallback,
         send_pcm_batch: SendPcmBatchCallback,
         get_buffer_size: GetBufferSizeCallback,
+        clear_send_audio: ClearSendAudioCallback | None = None,
         wait_for_audio_encoder: WaitForAudioEncoderCallback,
         join_channel: JoinChannelCallback,
         is_in_channel: IsInChannelCallback | None = None,
@@ -62,6 +64,7 @@ class ChannelSession:
         self._send_message = send_message
         self._request_destroy = on_shutdown
         self._wait_for_audio_encoder = wait_for_audio_encoder
+        self._clear_send_audio = clear_send_audio
         self._human_count = 0
         self._grace_task: asyncio.Task[None] | None = None
         self._joined = False
@@ -120,6 +123,8 @@ class ChannelSession:
 
     async def stop_playback(self, *, clear_all: bool = False) -> None:
         self.engine.stop()
+        if self._clear_send_audio is not None:
+            await self._clear_send_audio()
         await self.engine.wait_stopped()
         if clear_all:
             self.queue.clear_all()
