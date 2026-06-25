@@ -37,6 +37,8 @@ class CoordinatorBot:
             settings.mumble_password,
             reconnect=True,
             stereo=False,
+            certfile=settings.mumble_certfile,
+            keyfile=settings.mumble_keyfile,
             on_text=self._enqueue_text,
         )
         self._connection.set_post_connect_channel(ROOT_CHANNEL_ID)

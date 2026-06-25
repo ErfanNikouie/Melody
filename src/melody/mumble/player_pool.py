@@ -96,6 +96,8 @@ class PlayerPool:
                     password,
                     reconnect=True,
                     stereo=True,
+                    certfile=self._settings.mumble_certfile,
+                    keyfile=self._settings.mumble_keyfile,
                     on_text=None,
                 )
 

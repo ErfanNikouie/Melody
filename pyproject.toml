@@ -13,7 +13,7 @@ authors = [{ name = "Erfan Nikouie" }]
 dependencies = [
     "aiohttp>=3.9.0",
     "pydantic-settings>=2.0.0",
-    "pymumble>=1.6.1,<2",
+    "pymumble @ git+https://github.com/oopsbagel/pymumble.git",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +25,9 @@ dev = [
 
 [project.scripts]
 melody = "melody.__main__:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/melody"]

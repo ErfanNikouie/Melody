@@ -8,89 +8,68 @@ from pathlib import Path
 import pytest
 
 
-def _pymumble_path(relative: str) -> Path:
-    spec = importlib.util.find_spec("pymumble_py3")
+def _mumble_path(relative: str) -> Path:
+    spec = importlib.util.find_spec("mumble")
     if spec is None or spec.origin is None:
-        pytest.skip("pymumble_py3 is not installed")
+        pytest.skip("mumble (pymumble 2) is not installed")
     return Path(spec.origin).parent / relative
 
 
 def test_connection_rejected_error_exists() -> None:
-    source = _pymumble_path("errors.py").read_text(encoding="utf-8")
+    source = _mumble_path("errors.py").read_text(encoding="utf-8")
     assert "class ConnectionRejectedError" in source
-    assert "class DenyError" not in source
 
 
-def test_callback_constants_exist() -> None:
-    source = _pymumble_path("constants.py").read_text(encoding="utf-8")
-    for name in (
-        "PYMUMBLE_CLBK_CONNECTED",
-        "PYMUMBLE_CLBK_DISCONNECTED",
-        "PYMUMBLE_CLBK_TEXTMESSAGERECEIVED",
-        "PYMUMBLE_CONN_STATE_FAILED",
-    ):
-        assert name in source, f"missing pymumble constant {name}"
+def test_callbacks_use_handler_objects() -> None:
+    source = _mumble_path("callbacks.py").read_text(encoding="utf-8")
+    assert "class Callbacks" in source
+    assert "text_message_received" in source
+    assert "def set_handler" in source
+    assert "def clear_handler" in source
 
 
-def test_callbacks_use_callbacks_object() -> None:
-    source = _pymumble_path("mumble.py").read_text(encoding="utf-8")
-    assert "self.callbacks = callbacks.CallBacks()" in source
-    assert "def set_callback" not in source.split("class Mumble", maxsplit=1)[-1]
+def test_send_audio_replaces_sound_output() -> None:
+    source = _mumble_path("mumble.py").read_text(encoding="utf-8")
+    assert "self.send_audio = SendAudio" in source
+    assert "sound_output" not in source
 
 
-def test_ssl_wrap_socket_compat_on_modern_python() -> None:
-    import ssl
-
-    from melody.mumble.pymumble_compat import install_ssl_wrap_socket_compat
-
-    install_ssl_wrap_socket_compat()
-    assert hasattr(ssl, "wrap_socket")
-
-
-def test_stereo_players_enable_receive_sound() -> None:
-    """pymumble (azlux) only allocates sound_output when receive_sound is set."""
+def test_stereo_players_enable_audio() -> None:
+    """pymumble 2 allocates send_audio when enable_audio is True."""
     source = (
         Path(__file__).resolve().parents[1] / "src" / "melody" / "mumble" / "connection.py"
     ).read_text(encoding="utf-8")
-    assert "set_receive_sound(1)" in source
+    assert "enable_audio=self._stereo" in source
+    assert "client_type=self._client_type" in source
 
 
-def test_clear_callbacks_helper_exists(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[tuple[str, object | None]] = []
+def test_clear_callbacks_helper_exists() -> None:
+    calls: list[str] = []
+
+    class _Callback:
+        def clear_handler(self) -> None:
+            calls.append("cleared")
 
     class _Callbacks:
-        def set_callback(self, name: str, handler: object | None) -> None:
-            calls.append((name, handler))
-
-    fake_constants = type(
-        "C",
-        (),
-        {
-            "PYMUMBLE_CLBK_TEXTMESSAGERECEIVED": "text",
-            "PYMUMBLE_CLBK_CONNECTED": "connected",
-            "PYMUMBLE_CLBK_DISCONNECTED": "disconnected",
-        },
-    )()
-    monkeypatch.setitem(
-        __import__("sys").modules,
-        "pymumble_py3.constants",
-        fake_constants,
-    )
+        text_message_received = _Callback()
+        connected = _Callback()
+        disconnected = _Callback()
 
     from melody.mumble.pymumble_util import clear_callbacks
 
     mumble = type("M", (), {"callbacks": _Callbacks()})()
     clear_callbacks(mumble)
-    assert calls == [("text", None), ("connected", None), ("disconnected", None)]
+    assert calls == ["cleared", "cleared", "cleared"]
 
 
-def test_load_pymumble_imports_without_deny_error() -> None:
+def test_load_pymumble_imports_mumble_module() -> None:
     from melody.mumble.pymumble_util import load_pymumble
 
     try:
-        _pymumble, reject_error = load_pymumble()
+        pymumble, reject_error = load_pymumble()
     except Exception as exc:
         if "Opus" in str(exc):
             pytest.skip("libopus not available in this environment")
         raise
+    assert pymumble.Mumble is not None
     assert reject_error.__name__ == "ConnectionRejectedError"

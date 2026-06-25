@@ -21,7 +21,7 @@ def setup_logging(level: str = "INFO") -> None:
     root.addHandler(handler)
     root.setLevel(log_level)
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
-    logging.getLogger("pymumble").setLevel(logging.WARNING)
+    logging.getLogger("PyMumble").setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:

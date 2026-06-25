@@ -23,14 +23,10 @@ class ParsedTextMessage:
     target_channel_id: int | None
 
 
-from melody.mumble.pymumble_compat import install_ssl_wrap_socket_compat
-
-
 def load_pymumble() -> tuple[Any, type[Exception]]:
     """Return (pymumble module, connection-rejected exception class)."""
-    install_ssl_wrap_socket_compat()
-    import pymumble_py3 as pymumble
-    from pymumble_py3.errors import ConnectionRejectedError
+    import mumble as pymumble
+    from mumble.errors import ConnectionRejectedError
 
     return pymumble, ConnectionRejectedError
 
@@ -42,30 +38,18 @@ def bind_callbacks(
     on_connected: Callable[[], None],
     on_disconnected: Callable[[], None],
 ) -> None:
-    """Register pymumble event handlers using the library's public callback API."""
-    from pymumble_py3.constants import (
-        PYMUMBLE_CLBK_CONNECTED,
-        PYMUMBLE_CLBK_DISCONNECTED,
-        PYMUMBLE_CLBK_TEXTMESSAGERECEIVED,
-    )
-
-    mumble.callbacks.set_callback(PYMUMBLE_CLBK_TEXTMESSAGERECEIVED, on_text)
-    mumble.callbacks.set_callback(PYMUMBLE_CLBK_CONNECTED, on_connected)
-    mumble.callbacks.set_callback(PYMUMBLE_CLBK_DISCONNECTED, on_disconnected)
+    """Register pymumble event handlers."""
+    mumble.callbacks.text_message_received.set_handler(on_text)
+    mumble.callbacks.connected.set_handler(on_connected)
+    mumble.callbacks.disconnected.set_handler(on_disconnected)
 
 
 def clear_callbacks(mumble: Any) -> None:
     """Best-effort removal of callbacks that can retain Melody objects."""
     try:
-        from pymumble_py3.constants import (
-            PYMUMBLE_CLBK_CONNECTED,
-            PYMUMBLE_CLBK_DISCONNECTED,
-            PYMUMBLE_CLBK_TEXTMESSAGERECEIVED,
-        )
-
-        mumble.callbacks.set_callback(PYMUMBLE_CLBK_TEXTMESSAGERECEIVED, None)
-        mumble.callbacks.set_callback(PYMUMBLE_CLBK_CONNECTED, None)
-        mumble.callbacks.set_callback(PYMUMBLE_CLBK_DISCONNECTED, None)
+        mumble.callbacks.text_message_received.clear_handler()
+        mumble.callbacks.connected.clear_handler()
+        mumble.callbacks.disconnected.clear_handler()
     except Exception:
         # Teardown should never fail just because pymumble's callback object is already gone.
         pass
@@ -73,7 +57,7 @@ def clear_callbacks(mumble: Any) -> None:
 
 def get_session_id(mumble: Any) -> int | None:
     """Return this bot's Mumble session id, if known."""
-    session = mumble.users.myself_session
+    session = mumble.users.my_session
     return int(session) if session is not None else None
 
 
@@ -94,9 +78,9 @@ def parse_text_message(mumble: Any, mess: Any) -> ParsedTextMessage | None:
     sender_channel_id = ROOT_CHANNEL_ID
     try:
         user = mumble.users[sender_session]
-        sender_name = user.get("name", sender_name)
-        sender_channel_id = int(user.get("channel_id", ROOT_CHANNEL_ID))
-    except (KeyError, TypeError):
+        sender_name = user.name
+        sender_channel_id = int(user.channel_id)
+    except (KeyError, TypeError, AttributeError):
         pass
 
     sender_channel_name = _channel_name(mumble, sender_channel_id)

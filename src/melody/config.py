@@ -48,7 +48,8 @@ class Settings(BaseSettings):
     mumble_port: int = Field(default=64738, alias="MUMBLE_PORT")
     mumble_username: str = Field(alias="MUMBLE_USERNAME")
     mumble_password: str = Field(default="", alias="MUMBLE_PASSWORD")
-    mumble_tls: bool = Field(default=False, alias="MUMBLE_TLS")
+    mumble_certfile: str | None = Field(default=None, alias="MUMBLE_CERTFILE")
+    mumble_keyfile: str | None = Field(default=None, alias="MUMBLE_KEYFILE")
 
     # MelodyPlayer pool
     player_mode: str = Field(default="pool", alias="PLAYER_MODE")

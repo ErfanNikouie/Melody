@@ -82,12 +82,12 @@ async def test_connection_stop_clears_text_handler() -> None:
     assert connection._on_text is None  # noqa: SLF001
 
 
-def test_pyproject_pins_pymumble_below_2() -> None:
+def test_pyproject_requires_pymumble_2() -> None:
     import tomllib
 
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    pymumble_dep = next(dep for dep in data["project"]["dependencies"] if dep.startswith("pymumble"))
-    assert "<2" in pymumble_dep
+    pymumble_dep = next(dep for dep in data["project"]["dependencies"] if "pymumble" in dep)
+    assert "oopsbagel/pymumble" in pymumble_dep or ">=2" in pymumble_dep
 
 
 @pytest.mark.asyncio

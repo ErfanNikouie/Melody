@@ -9,7 +9,7 @@ from melody.models import QueueItem, RepeatMode, Track
 
 # Cap history so long sessions do not retain every played track forever.
 MAX_QUEUE_HISTORY = 200
-# Cap upcoming tracks so repeated queue commands cannot grow RAM without bound.
+# Cap total queued tracks (current + upcoming) so queue commands cannot grow RAM without bound.
 MAX_UPCOMING = 500
 
 
@@ -206,10 +206,15 @@ class QueueManager:
         self._current = None
         return None
 
+    def _upcoming_capacity(self) -> int:
+        """Max upcoming items while keeping current + upcoming within MAX_UPCOMING."""
+        reserved = 1 if self._current is not None else 0
+        return max(0, MAX_UPCOMING - reserved)
+
     def _extend_upcoming(self, items: list[QueueItem]) -> None:
         if not items:
             return
-        room = MAX_UPCOMING - len(self._upcoming)
+        room = self._upcoming_capacity() - len(self._upcoming)
         if room <= 0:
             return
         self._upcoming.extend(items[:room])

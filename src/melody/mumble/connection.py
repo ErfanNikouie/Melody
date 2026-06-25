@@ -42,6 +42,9 @@ class MumbleConnection:
         *,
         reconnect: bool = True,
         stereo: bool = True,
+        certfile: str | None = None,
+        keyfile: str | None = None,
+        client_type: int = 1,
         on_text: TextHandler | None = None,
         on_connected: ConnectedHandler | None = None,
         on_disconnected: DisconnectedHandler | None = None,
@@ -52,6 +55,9 @@ class MumbleConnection:
         self._password = password
         self._reconnect = reconnect
         self._stereo = stereo
+        self._certfile = certfile
+        self._keyfile = keyfile
+        self._client_type = client_type
         self._on_text = on_text
         self._on_connected_cb = on_connected
         self._on_disconnected_cb = on_disconnected
@@ -142,10 +148,12 @@ class MumbleConnection:
                 password=self._password,
                 reconnect=self._reconnect,
                 stereo=self._stereo,
+                enable_audio=self._stereo,
+                certfile=self._certfile,
+                keyfile=self._keyfile,
+                client_type=self._client_type,
             )
             if self._stereo:
-                # pymumble only creates sound_output when receive_sound is enabled.
-                self._mumble.set_receive_sound(1)
                 self._mumble.set_codec_profile("audio")
             bind_callbacks(
                 self._mumble,
@@ -154,9 +162,9 @@ class MumbleConnection:
                 on_disconnected=self._handle_disconnected,
             )
             self._mumble.start()
-            # Do not call is_ready() here: pymumble releases its ready lock on a
-            # failed connect attempt too, which would let us exit this thread,
-            # kill reconnect, and surface ConnectionRejectedError in the child.
+            # Do not call wait_until_connected() here: pymumble releases its ready
+            # lock on a failed connect attempt too, which would let us exit this
+            # thread, kill reconnect, and surface ConnectionRejectedError.
             self._mumble.join()
             if not self._ready.is_set():
                 logger.error(
@@ -206,25 +214,25 @@ class MumbleConnection:
         if not self._stereo or self._mumble is None:
             return
         try:
-            if not self._has_sound_output():
-                logger.warning("Voice setup skipped user=%s (sound_output missing)", self._username)
+            if not self._has_send_audio():
+                logger.warning("Voice setup skipped user=%s (send_audio missing)", self._username)
                 return
             if getattr(self._mumble, "server_max_bandwidth", None) is not None:
                 self._mumble.set_bandwidth(128000)
-            sound_out = self._mumble.sound_output
+            sound_out = self._mumble.send_audio
             sound_out.set_audio_per_packet(0.04)
             myself = self._mumble.users.myself
             if myself is None:
                 logger.warning("Voice setup skipped user=%s (myself unknown)", self._username)
                 return
-            myself.unmute()
-            myself.undeafen()
-            myself.unsuppress()
+            myself.self_mute = False
+            myself.self_deaf = False
+            myself.suppress = False
             try:
                 myself.register()
             except Exception:
                 pass
-            encoder_ready = self._mumble.sound_output.encoder is not None
+            encoder_ready = self._mumble.send_audio.encoder is not None
             if encoder_ready:
                 self._encoder_ready = True
             logger.info(
@@ -236,10 +244,10 @@ class MumbleConnection:
         except Exception:
             logger.exception("Failed to prepare voice for user=%s", self._username)
 
-    def _has_sound_output(self) -> bool:
+    def _has_send_audio(self) -> bool:
         if self._mumble is None:
             return False
-        return getattr(self._mumble, "sound_output", None) is not None
+        return getattr(self._mumble, "send_audio", None) is not None
 
     async def wait_for_audio_encoder(self, timeout: float = 10.0) -> bool:
         """Wait until pymumble has a working Opus encoder (CodecVersion received)."""
@@ -257,9 +265,9 @@ class MumbleConnection:
         return False
 
     def _has_audio_encoder(self) -> bool:
-        if not self._has_sound_output():
+        if not self._has_send_audio():
             return False
-        return self._mumble.sound_output.encoder is not None
+        return self._mumble.send_audio.encoder is not None
 
     def _handle_disconnected(self) -> None:
         self._encoder_ready = False
@@ -365,7 +373,7 @@ class MumbleConnection:
             myself = self._mumble.users.myself
             if myself is None:
                 return None
-            return int(myself["channel_id"])
+            return int(myself.channel_id)
         except (KeyError, TypeError, AttributeError):
             return None
 
@@ -476,33 +484,33 @@ class MumbleConnection:
         await asyncio.to_thread(self._send_pcm_batch_sync, chunks)
 
     def _send_pcm_batch_sync(self, chunks: list[bytes]) -> None:
-        if self._mumble is None or not self._has_sound_output():
+        if self._mumble is None or not self._has_send_audio():
             return
-        if self._mumble.sound_output.encoder is None:
+        if self._mumble.send_audio.encoder is None:
             logger.warning("Dropped PCM batch user=%s (Opus encoder not ready)", self._username)
             return
         for data in chunks:
-            self._mumble.sound_output.add_sound(data)
+            self._mumble.send_audio.add_sound(data)
 
     def _send_pcm_sync(self, data: bytes) -> None:
-        if self._mumble is None or not self._has_sound_output():
+        if self._mumble is None or not self._has_send_audio():
             return
-        if self._mumble.sound_output.encoder is None:
+        if self._mumble.send_audio.encoder is None:
             logger.warning("Dropped PCM user=%s (Opus encoder not ready)", self._username)
             return
-        self._mumble.sound_output.add_sound(data)
+        self._mumble.send_audio.add_sound(data)
 
     def get_buffer_size(self) -> float:
-        if self._mumble is None or not self._has_sound_output():
+        if self._mumble is None or not self._has_send_audio():
             return 0.0
-        return self._mumble.sound_output.get_buffer_size()
+        return self._mumble.send_audio.get_buffer_size()
 
     def count_humans_in(self, channel_id: int) -> int:
         if self._mumble is None:
             return 0
         count = 0
-        for user in self._mumble.users.values():
-            if user["channel_id"] == channel_id and user["session"] != self._bot_session_id:
+        for user in self._mumble.users.by_session().values():
+            if user.channel_id == channel_id and user.session != self._bot_session_id:
                 count += 1
         return count
 

@@ -123,7 +123,8 @@ def test_history_is_capped() -> None:
     q = QueueManager()
     total = MAX_QUEUE_HISTORY + 25
     q.play_now([_item(str(i)) for i in range(total)])
-    for _ in range(total - 1):
+    for _ in range(total):
         q.on_track_finished()
     assert len(q.history) == MAX_QUEUE_HISTORY
-    assert q.history[0].track.id == str(25)
+    assert q.history[0].track.id == str(total - MAX_QUEUE_HISTORY)
+    assert q.current is None

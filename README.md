@@ -92,7 +92,7 @@ No layer imports from Mumble or App. Commands talk to sessions through `IChannel
 
 1. HTTP stream from Subsonic `stream.view` (FFmpeg reads the URL directly)
 2. FFmpeg transcodes encoded audio → s16le 48 kHz stereo PCM
-3. PCM frames sent to Mumble via [PyMumble](https://github.com/azlux/pymumble)
+3. PCM frames sent to Mumble via [PyMumble](https://github.com/oopsbagel/pymumble)
 
 ## Supported Subsonic backends
 
@@ -110,7 +110,7 @@ No Navidrome-specific code is used.
 
 - Python 3.12+
 - FFmpeg
-- libopus (required by [PyMumble](https://github.com/azlux/pymumble) for audio encoding)
+- libopus (required by [PyMumble](https://github.com/oopsbagel/pymumble) for audio encoding)
 
 ## Docker deployment
 
@@ -169,7 +169,8 @@ pytest
 | `MUMBLE_PORT` | No | `64738` | Mumble server port |
 | `MUMBLE_USERNAME` | Yes | — | Coordinator username (`Melody`) — receives whispers |
 | `MUMBLE_PASSWORD` | No | `""` | Mumble server password for coordinator |
-| `MUMBLE_TLS` | No | `false` | TLS flag (see troubleshooting) |
+| `MUMBLE_CERTFILE` | No | — | Path to Mumble client certificate (`.pem`) for registered users |
+| `MUMBLE_KEYFILE` | No | — | Path to private key for `MUMBLE_CERTFILE` (`.pem`) |
 | `PLAYER_MODE` | No | `pool` | `pool` (fixed slots) or `per_channel` (`MelodyPlayer-{channel}`) |
 | `PLAYER_POOL_SIZE` | No | `5` | Max simultaneous channels when `PLAYER_MODE=pool` |
 | `PLAYER_USERNAME_PREFIX` | No | `MelodyPlayer` | Prefix for player usernames |
@@ -307,9 +308,9 @@ Some backends delay the first bytes of a stream. Melody waits up to 30 seconds f
 - Ensure the bot username is allowed on the server
 - Some servers require a registered certificate for the bot user
 
-### `MUMBLE_TLS`
+### Mumble TLS and certificates
 
-pymumble connects over plain TCP by default. If your server requires TLS, you may need a TLS-terminating proxy or connect to a non-TLS port. Set `MUMBLE_TLS` for future compatibility; check your Mumble server documentation for the correct port.
+pymumble 2 always connects to Murmur over **TLS** on the control port (default `64738`). No extra flag is required. If your server expects a registered client certificate, set `MUMBLE_CERTFILE` and `MUMBLE_KEYFILE` to `.pem` paths (convert from Mumble's `.p12` with OpenSSL if needed). Connection failures are usually wrong host/port/password or a missing server certificate allowance for the bot user.
 
 ### Subsonic authentication errors
 
@@ -332,12 +333,12 @@ Melody is built on these projects and protocols:
 | Project | Role in Melody |
 |---------|----------------|
 | [Mumble](https://www.mumble.info/) | Voice chat platform Melody streams audio into ([Murmur](https://wiki.mumble.info/wiki/Murmur) server) |
-| [PyMumble](https://github.com/azlux/pymumble) | Python Mumble client library (`pymumble_py3`, v1.x) — connections, voice transmission, chat |
-
-Melody pins `pymumble>=1.6.1,<2` because the v2 API is breaking and still stabilizing. See [docs/pymumble2-migration.md](docs/pymumble2-migration.md) for a future migration outline.
+| [PyMumble](https://github.com/oopsbagel/pymumble) | Python Mumble client library (`mumble`, v2.x) — connections, voice transmission, chat |
 | [Subsonic API](https://www.subsonic.org/pages/api.jsp) | REST API for search, streaming, and library access ([OpenSubsonic](https://opensubsonic.netlify.app/) extensions) |
 | [Navidrome](https://www.navidrome.org/) | Self-hosted music server — primary Subsonic-compatible backend target |
 | [Octo Fiesta](https://github.com/V1ck3s/octo-fiesta) | Subsonic API proxy in front of Navidrome — on-demand streaming-provider tracks |
+
+Melody uses pymumble 2 from the oopsbagel fork. The PyPI package name is `pymumble`; see [docs/pymumble2-migration.md](docs/pymumble2-migration.md) for version notes.
 
 ## License
 
