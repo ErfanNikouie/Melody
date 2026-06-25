@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     ffmpeg_analyzeduration: str = Field(default="500k", alias="FFMPEG_ANALYZEDURATION")
     pcm_target_buffer_ms: int = Field(default=80, alias="PCM_TARGET_BUFFER_MS")
     pcm_max_prebuffer_frames: int = Field(default=6, alias="PCM_MAX_PREBUFFER_FRAMES")
-    pcm_prebuffer_batch_size: int = Field(default=1, alias="PCM_PREBUFFER_BATCH_SIZE")
+    pcm_prebuffer_batch_size: int = Field(default=4, alias="PCM_PREBUFFER_BATCH_SIZE")
 
     # Search ranking (must sum to 100)
     search_relevance_percent: int = Field(default=85, alias="SEARCH_RELEVANCE_PERCENT")

@@ -270,7 +270,7 @@ class PlaybackEngine:
                 scaled = pending_batch
             else:
                 scaled = [self._scale_pcm(chunk) for chunk in pending_batch]
-            if self._send_pcm_batch and len(scaled) > 1:
+            if self._send_pcm_batch is not None:
                 await self._send_pcm_batch(scaled)
             else:
                 for chunk in scaled:

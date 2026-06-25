@@ -91,10 +91,7 @@ class PlayerPool:
         player = self._active.get(channel_id)
         if player is None:
             return
-        count = await asyncio.to_thread(
-            player.connection.count_humans_in,
-            player.channel_id,
-        )
+        count = await player.connection.count_humans_in_channel(player.channel_id)
         player.session.update_human_count(count)
 
     async def refresh_all_occupancy(self) -> None:

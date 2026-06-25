@@ -24,6 +24,7 @@ NotifyCallback = Callable[[str], Awaitable[None]]
 _OCCUPANCY_POLL_INTERVAL = 30.0
 _PLAYER_QUEUE_MAX = 64
 _SHUTDOWN = object()
+_READ_ONLY_COMMANDS = frozenset({"list", "current", "help"})
 
 
 class MumbleOrchestrator:
@@ -110,6 +111,12 @@ class MumbleOrchestrator:
                 pass
 
     async def _on_coordinator_text(self, message: ParsedTextMessage) -> None:
+        asyncio.create_task(
+            self._dispatch_coordinator_text(message),
+            name="coordinator-command",
+        )
+
+    async def _dispatch_coordinator_text(self, message: ParsedTextMessage) -> None:
         commands = self._parser.parse_all(message.message)
         if not commands:
             return
@@ -188,13 +195,10 @@ class MumbleOrchestrator:
                     break
                 if not isinstance(message, ParsedTextMessage):
                     continue
-                try:
-                    await self._handle_player_text(channel_id, message)
-                except Exception:
-                    logger.exception(
-                        "Player listener failed channel_id=%s",
-                        channel_id,
-                    )
+                asyncio.create_task(
+                    self._dispatch_player_text(channel_id, message),
+                    name=f"player-command-{channel_id}",
+                )
         except asyncio.CancelledError:
             pass
         finally:
@@ -202,6 +206,15 @@ class MumbleOrchestrator:
                 self._player_tasks.pop(channel_id, None)
             if self._player_queues.get(channel_id) is queue:
                 self._player_queues.pop(channel_id, None)
+
+    async def _dispatch_player_text(self, channel_id: int, message: ParsedTextMessage) -> None:
+        try:
+            await self._handle_player_text(channel_id, message)
+        except Exception:
+            logger.exception(
+                "Player listener failed channel_id=%s",
+                channel_id,
+            )
 
     async def _handle_player_text(self, channel_id: int, message: ParsedTextMessage) -> None:
         if not is_player_channel_message(message, channel_id):
@@ -241,34 +254,31 @@ class MumbleOrchestrator:
         tasks = search_tasks or {}
         lock = self._command_locks[player.channel_id]
         destroy = False
+        needs_lock = any(command.name not in _READ_ONLY_COMMANDS for command in commands)
         try:
-            async with lock:
-                for index, command in enumerate(commands):
-                    started = time.monotonic()
-                    destroy = await self._handler.handle(
-                        command,
-                        player.session,
+            if needs_lock:
+                async with lock:
+                    destroy = await self._execute_commands(
+                        commands,
+                        player,
+                        message,
                         notify=notify,
-                        search_task=tasks.get(index),
+                        tasks=tasks,
                     )
-                    logger.debug(
-                        "Command %s channel_id=%s ms=%.0f",
-                        command.name,
-                        player.channel_id,
-                        (time.monotonic() - started) * 1000,
-                    )
-                    if destroy:
-                        break
+            else:
+                destroy = await self._execute_commands(
+                    commands,
+                    player,
+                    message,
+                    notify=notify,
+                    tasks=tasks,
+                )
             if destroy:
                 asyncio.create_task(
                     self._pool.release(player.channel_id),
                     name=f"release-{player.channel_id}",
                 )
                 return
-            asyncio.create_task(
-                self._refresh_player_occupancy(player),
-                name=f"occupancy-{player.channel_id}",
-            )
         except Exception:
             logger.exception(
                 "Command failed channel_id=%s from=%s",
@@ -282,12 +292,37 @@ class MumbleOrchestrator:
         finally:
             await self._cancel_search_tasks(tasks)
 
+    async def _execute_commands(
+        self,
+        commands: list[ParsedCommand],
+        player: PlayerBot,
+        message: ParsedTextMessage,
+        *,
+        notify: NotifyCallback | None,
+        tasks: dict[int, SearchTask],
+    ) -> bool:
+        destroy = False
+        for index, command in enumerate(commands):
+            started = time.monotonic()
+            destroy = await self._handler.handle(
+                command,
+                player.session,
+                notify=notify,
+                search_task=tasks.get(index),
+            )
+            logger.debug(
+                "Command %s channel_id=%s ms=%.0f",
+                command.name,
+                player.channel_id,
+                (time.monotonic() - started) * 1000,
+            )
+            if destroy:
+                break
+        return destroy
+
     async def _refresh_player_occupancy(self, player: PlayerBot) -> None:
         try:
-            count = await asyncio.to_thread(
-                player.connection.count_humans_in,
-                player.channel_id,
-            )
+            count = await player.connection.count_humans_in_channel(player.channel_id)
             player.session.update_human_count(count)
         except Exception:
             logger.exception(

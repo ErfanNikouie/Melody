@@ -54,6 +54,9 @@ class _Session:
     async def start_playback(self, *, announce: bool = True) -> None:
         return None
 
+    def schedule_playback(self, *, announce: bool = True) -> None:
+        return None
+
     def pause(self) -> None:
         return None
 

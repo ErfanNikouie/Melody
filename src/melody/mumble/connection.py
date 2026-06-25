@@ -6,6 +6,7 @@ import asyncio
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from melody.logging import get_logger
@@ -73,6 +74,10 @@ class MumbleConnection:
         self._post_connect_channel: int | None = None
         self._encoder_ready = False
         self._accept_events = False
+        self._sync_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix=f"mumble-sync-{username[:24]}",
+        )
 
     @property
     def username(self) -> str:
@@ -128,6 +133,12 @@ class MumbleConnection:
         self._on_connected_cb = None
         self._on_disconnected_cb = None
         self._on_users_changed_cb = None
+        self._sync_executor.shutdown(wait=False, cancel_futures=True)
+
+    async def _run_sync(self, fn: Callable[..., Any], *args: Any) -> Any:
+        """Run pymumble work on a dedicated single-thread executor."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._sync_executor, lambda: fn(*args))
 
     def _run(self) -> None:
         try:
@@ -264,8 +275,8 @@ class MumbleConnection:
             return True
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
-            if await asyncio.to_thread(self._has_audio_encoder):
-                await asyncio.to_thread(self._ensure_voice_ready)
+            if await self._run_sync(self._has_audio_encoder):
+                await self._run_sync(self._ensure_voice_ready)
                 self._encoder_ready = True
                 return True
             await asyncio.sleep(0.05)
@@ -303,7 +314,7 @@ class MumbleConnection:
             loop.call_soon_threadsafe(handler, parsed)
 
     async def is_in_channel(self, channel_id: int) -> bool:
-        return await asyncio.to_thread(self._is_in_channel_sync, channel_id)
+        return await self._run_sync(self._is_in_channel_sync, channel_id)
 
     def _is_in_channel_sync(self, channel_id: int) -> bool:
         return self.current_channel_id == channel_id
@@ -312,7 +323,7 @@ class MumbleConnection:
         self._post_connect_channel = channel_id
         if await self.is_in_channel(channel_id):
             return True
-        return await asyncio.to_thread(self._join_channel_sync, channel_id)
+        return await self._run_sync(self._join_channel_sync, channel_id)
 
     def _join_channel_sync(self, channel_id: int) -> bool:
         if self._mumble is None:
@@ -388,7 +399,7 @@ class MumbleConnection:
         await self.join_channel(0)
 
     async def send_channel_message(self, channel_id: int, message: str) -> bool:
-        return await asyncio.to_thread(self._send_channel_message_sync, channel_id, message)
+        return await self._run_sync(self._send_channel_message_sync, channel_id, message)
 
     def _send_channel_message_sync(self, channel_id: int, message: str) -> bool:
         if self._mumble is None or not self.is_connected:
@@ -432,7 +443,7 @@ class MumbleConnection:
         return False
 
     async def whisper_user(self, session_id: int, message: str) -> bool:
-        return await asyncio.to_thread(self._whisper_user_sync, session_id, message)
+        return await self._run_sync(self._whisper_user_sync, session_id, message)
 
     def _whisper_user_sync(self, session_id: int, message: str) -> bool:
         if self._mumble is None or not self.is_connected:
@@ -483,12 +494,13 @@ class MumbleConnection:
         return False
 
     async def send_pcm(self, data: bytes) -> None:
-        await asyncio.to_thread(self._send_pcm_sync, data)
+        # add_sound only appends PCM under a brief lock; avoid per-frame thread-pool churn.
+        self._send_pcm_sync(data)
 
     async def send_pcm_batch(self, chunks: list[bytes]) -> None:
         if not chunks:
             return
-        await asyncio.to_thread(self._send_pcm_batch_sync, chunks)
+        self._send_pcm_batch_sync(chunks)
 
     def _send_pcm_batch_sync(self, chunks: list[bytes]) -> None:
         if self._mumble is None or not self._has_send_audio():
@@ -513,7 +525,7 @@ class MumbleConnection:
         return self._mumble.send_audio.get_buffer_size()
 
     async def clear_send_audio(self) -> None:
-        await asyncio.to_thread(self._clear_send_audio_sync)
+        self._clear_send_audio_sync()
 
     def _clear_send_audio_sync(self) -> None:
         if self._mumble is None or not self._has_send_audio():
@@ -528,6 +540,9 @@ class MumbleConnection:
             if user.channel_id == channel_id and user.session != self._bot_session_id:
                 count += 1
         return count
+
+    async def count_humans_in_channel(self, channel_id: int) -> int:
+        return await self._run_sync(self.count_humans_in, channel_id)
 
     def channel_name(self, channel_id: int) -> str:
         if self._mumble is None:

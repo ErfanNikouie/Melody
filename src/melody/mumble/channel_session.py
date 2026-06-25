@@ -69,6 +69,7 @@ class ChannelSession:
         self._grace_task: asyncio.Task[None] | None = None
         self._joined = False
         self._stop_drain_task: asyncio.Task[None] | None = None
+        self._playback_start_task: asyncio.Task[None] | None = None
 
         self.engine = PlaybackEngine(
             subsonic,
@@ -122,6 +123,23 @@ class ChannelSession:
             logger.error("Mumble Opus encoder not ready channel_id=%s", self.channel_id)
         await self.engine.play_current(announce=announce)
 
+    def schedule_playback(self, *, announce: bool = True) -> None:
+        """Start playback without blocking chat command handling."""
+        if self._playback_start_task is not None and not self._playback_start_task.done():
+            self._playback_start_task.cancel()
+        self._playback_start_task = asyncio.create_task(
+            self._run_scheduled_playback(announce=announce),
+            name=f"playback-start-{self.channel_id}",
+        )
+
+    async def _run_scheduled_playback(self, *, announce: bool = True) -> None:
+        try:
+            await self.start_playback(announce=announce)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Scheduled playback failed channel_id=%s", self.channel_id)
+
     def begin_stop(self, *, clear_all: bool = False) -> None:
         """Stop playback immediately without waiting for FFmpeg or Mumble teardown."""
         self.engine.stop()
@@ -172,23 +190,25 @@ class ChannelSession:
     async def resume(self) -> None:
         self.engine.resume()
         if self.queue.current and self.engine.state.value in ("idle", "paused"):
-            await self.engine.play_current(announce=False)
+            self.schedule_playback(announce=False)
 
     async def skip_next(self) -> None:
-        self.engine.stop()
+        self.begin_stop()
         nxt = self.queue.advance()
+        self.schedule_stop_drain()
         if nxt:
             await self.send_message(format_now_playing(nxt.track))
-            await self.engine.play_current(announce=False)
+            self.schedule_playback(announce=False)
         else:
             await self.send_message(format_queue_end())
 
     async def skip_back(self) -> None:
-        self.engine.stop()
+        self.begin_stop()
         prev = self.queue.go_back()
+        self.schedule_stop_drain()
         if prev:
             await self.send_message(format_now_playing(prev.track))
-            await self.engine.play_current(announce=False)
+            self.schedule_playback(announce=False)
         else:
             await self.send_message(format_no_previous())
 

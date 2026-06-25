@@ -201,7 +201,7 @@ class CommandHandler:
         session.queue.enqueue(items, **collection)
         if was_idle:
             await self._announce_playback(match, session, feedback, notify=notify)
-            await session.start_playback(announce=False)
+            session.schedule_playback(announce=False)
         else:
             await feedback(format_queued(match.display_name, match.track_count))
 
