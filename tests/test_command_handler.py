@@ -289,7 +289,7 @@ async def test_exit_command_replies_before_release() -> None:
     )
 
     assert destroy
-    assert session.messages == ["👋 <b>Left channel</b>"]
+    assert session.messages == ["👋 <b>Leaving the channel…</b>"]
 
 
 @pytest.mark.asyncio

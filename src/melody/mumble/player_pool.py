@@ -63,6 +63,7 @@ class PlayerPool:
         self._slot_by_channel: dict[int, int] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._occupancy_timers: dict[int, asyncio.TimerHandle] = {}
+        self._releasing: set[int] = set()
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -79,6 +80,9 @@ class PlayerPool:
 
     def has_channel(self, channel_id: int) -> bool:
         return channel_id in self._active
+
+    def is_releasing(self, channel_id: int) -> bool:
+        return channel_id in self._releasing
 
     def is_ready(self, channel_id: int) -> bool:
         """True when a player is connected and can handle channel chat."""
@@ -103,6 +107,8 @@ class PlayerPool:
     async def acquire(self, channel_id: int, channel_name: str) -> tuple[PlayerBot, bool]:
         created = False
         async with self._lock:
+            if channel_id in self._releasing:
+                raise RuntimeError("MelodyPlayer is leaving this channel — try again in a moment")
             existing = self._active.get(channel_id)
             if existing is not None:
                 player = existing
@@ -186,17 +192,25 @@ class PlayerPool:
 
     async def release(self, channel_id: int) -> None:
         async with self._lock:
+            if channel_id in self._releasing:
+                return
             player = self._active.pop(channel_id, None)
             if player is None:
                 return
+            self._releasing.add(channel_id)
             self._return_slot(channel_id)
 
-        player.connection.set_text_handler(None)
-        self._cancel_occupancy_timer(channel_id)
-        if self._on_release:
-            await self._on_release(channel_id)
-        await player.stop()
-        logger.info("Player released channel_id=%s active=%s", channel_id, len(self._active))
+        try:
+            player.session.prepare_for_shutdown()
+            player.connection.set_text_handler(None)
+            self._cancel_occupancy_timer(channel_id)
+            if self._on_release:
+                await self._on_release(channel_id)
+            await player.stop()
+            logger.info("Player released channel_id=%s active=%s", channel_id, len(self._active))
+        finally:
+            async with self._lock:
+                self._releasing.discard(channel_id)
 
     async def get(self, channel_id: int) -> PlayerBot | None:
         async with self._lock:

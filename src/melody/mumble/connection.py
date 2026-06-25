@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import queue
 import threading
 import time
 from collections.abc import Callable
@@ -31,6 +32,7 @@ _MESSAGE_RETRIES = 3
 _MESSAGE_RETRY_DELAY = 0.15
 _CHANNEL_JOIN_RETRIES = 10
 _CHANNEL_JOIN_DELAY = 0.03
+_PCM_STOP = object()
 
 
 class MumbleConnection:
@@ -78,6 +80,8 @@ class MumbleConnection:
             max_workers=1,
             thread_name_prefix=f"mumble-sync-{username[:24]}",
         )
+        self._pcm_queue: queue.SimpleQueue[object] = queue.SimpleQueue()
+        self._pcm_writer: threading.Thread | None = None
 
     @property
     def username(self) -> str:
@@ -114,6 +118,7 @@ class MumbleConnection:
     async def stop(self) -> None:
         self._accept_events = False
         self._on_text = None
+        self._stop_pcm_writer()
         if self._mumble is not None:
             clear_callbacks(self._mumble)
             self._mumble.exit = True
@@ -134,6 +139,42 @@ class MumbleConnection:
         self._on_disconnected_cb = None
         self._on_users_changed_cb = None
         self._sync_executor.shutdown(wait=False, cancel_futures=True)
+
+    def _start_pcm_writer(self) -> None:
+        if not self._stereo:
+            return
+        if self._pcm_writer is not None and self._pcm_writer.is_alive():
+            return
+        while True:
+            try:
+                self._pcm_queue.get_nowait()
+            except queue.Empty:
+                break
+        self._pcm_writer = threading.Thread(
+            target=self._pcm_writer_loop,
+            name=f"pcm-{self._username}",
+            daemon=True,
+        )
+        self._pcm_writer.start()
+
+    def _pcm_writer_loop(self) -> None:
+        while True:
+            item = self._pcm_queue.get()
+            if item is _PCM_STOP:
+                break
+            if isinstance(item, list):
+                self._send_pcm_batch_sync(item)
+            elif isinstance(item, (bytes, bytearray)):
+                self._send_pcm_sync(bytes(item))
+
+    def _stop_pcm_writer(self) -> None:
+        if self._pcm_writer is not None:
+            self._pcm_queue.put(_PCM_STOP)
+            self._pcm_writer.join(timeout=2.0)
+            if self._pcm_writer.is_alive():
+                logger.warning("PCM writer did not stop user=%s", self._username)
+            self._pcm_writer = None
+        self._drain_pcm_queue()
 
     async def _run_sync(self, fn: Callable[..., Any], *args: Any) -> Any:
         """Run pymumble work on a dedicated single-thread executor."""
@@ -253,6 +294,7 @@ class MumbleConnection:
             encoder_ready = self._mumble.send_audio.encoder is not None
             if encoder_ready:
                 self._encoder_ready = True
+            self._start_pcm_writer()
             logger.info(
                 "Voice ready user=%s encoder_ready=%s buffer=%.2fs",
                 self._username,
@@ -494,13 +536,14 @@ class MumbleConnection:
         return False
 
     async def send_pcm(self, data: bytes) -> None:
-        # add_sound only appends PCM under a brief lock; avoid per-frame thread-pool churn.
-        self._send_pcm_sync(data)
+        if not self._accept_events or not self._stereo:
+            return
+        self._pcm_queue.put(data)
 
     async def send_pcm_batch(self, chunks: list[bytes]) -> None:
-        if not chunks:
+        if not chunks or not self._accept_events or not self._stereo:
             return
-        self._send_pcm_batch_sync(chunks)
+        self._pcm_queue.put(chunks)
 
     def _send_pcm_batch_sync(self, chunks: list[bytes]) -> None:
         if self._mumble is None or not self._has_send_audio():
@@ -525,7 +568,15 @@ class MumbleConnection:
         return self._mumble.send_audio.get_buffer_size()
 
     async def clear_send_audio(self) -> None:
+        self._drain_pcm_queue()
         self._clear_send_audio_sync()
+
+    def _drain_pcm_queue(self) -> None:
+        while True:
+            try:
+                self._pcm_queue.get_nowait()
+            except queue.Empty:
+                break
 
     def _clear_send_audio_sync(self) -> None:
         if self._mumble is None or not self._has_send_audio():

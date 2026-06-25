@@ -99,8 +99,13 @@ def format_stopped() -> str:
     return "⏹️ <b>Stopped</b> — queue cleared"
 
 
+def format_leaving_channel() -> str:
+    return "👋 <b>Leaving the channel…</b>"
+
+
 def format_left_channel() -> str:
-    return "👋 <b>Left channel</b>"
+    """Deprecated alias for :func:`format_leaving_channel`."""
+    return format_leaving_channel()
 
 
 def format_paused() -> str:

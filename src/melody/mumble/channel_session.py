@@ -70,6 +70,7 @@ class ChannelSession:
         self._joined = False
         self._stop_drain_task: asyncio.Task[None] | None = None
         self._playback_start_task: asyncio.Task[None] | None = None
+        self._shutting_down = False
 
         self.engine = PlaybackEngine(
             subsonic,
@@ -125,12 +126,24 @@ class ChannelSession:
 
     def schedule_playback(self, *, announce: bool = True) -> None:
         """Start playback without blocking chat command handling."""
+        if self._shutting_down:
+            return
         if self._playback_start_task is not None and not self._playback_start_task.done():
             self._playback_start_task.cancel()
         self._playback_start_task = asyncio.create_task(
             self._run_scheduled_playback(announce=announce),
             name=f"playback-start-{self.channel_id}",
         )
+
+    def prepare_for_shutdown(self) -> None:
+        """Stop playback tasks immediately before the Mumble connection tears down."""
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        self._cancel_grace_timer()
+        if self._playback_start_task is not None and not self._playback_start_task.done():
+            self._playback_start_task.cancel()
+        self.begin_stop(clear_all=True)
 
     async def _run_scheduled_playback(self, *, announce: bool = True) -> None:
         try:
@@ -252,8 +265,7 @@ class ChannelSession:
             pass
 
     async def shutdown(self) -> None:
-        self._cancel_grace_timer()
-        self.begin_stop(clear_all=True)
+        self.prepare_for_shutdown()
         if self._stop_drain_task is not None and not self._stop_drain_task.done():
             await self._stop_drain_task
         await self.finish_stop()

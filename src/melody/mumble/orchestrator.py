@@ -25,6 +25,7 @@ _OCCUPANCY_POLL_INTERVAL = 30.0
 _PLAYER_QUEUE_MAX = 64
 _SHUTDOWN = object()
 _READ_ONLY_COMMANDS = frozenset({"list", "current", "help"})
+_EXIT_COMMANDS = frozenset({"quit", "exit"})
 
 
 class MumbleOrchestrator:
@@ -121,6 +122,10 @@ class MumbleOrchestrator:
         if not commands:
             return
 
+        channel_id = message.sender_channel_id
+        if self._is_exit_noop(channel_id, commands):
+            return
+
         notify: NotifyCallback | None = None
         if message.is_private:
             notify = lambda text, sid=message.sender_session: self._coordinator.whisper(sid, text)
@@ -136,9 +141,16 @@ class MumbleOrchestrator:
 
         await self._run_commands(commands, player, message, notify=notify, search_tasks=search_tasks)
 
+    def _is_exit_noop(self, channel_id: int, commands: list[ParsedCommand]) -> bool:
+        if not all(command.name in _EXIT_COMMANDS for command in commands):
+            return False
+        return not self._pool.has_channel(channel_id) or self._pool.is_releasing(channel_id)
+
     async def _resolve_player_for_message(self, message: ParsedTextMessage) -> PlayerBot:
         """Return an active player, spawning only when the channel has none."""
         channel_id = message.sender_channel_id
+        if self._pool.is_releasing(channel_id):
+            raise RuntimeError("MelodyPlayer is leaving this channel — try again in a moment")
         existing = await self._pool.get(channel_id)
         if existing is not None and existing.connection.is_connected:
             return existing
@@ -153,6 +165,8 @@ class MumbleOrchestrator:
     ) -> PlayerBot:
         channel_id = message.sender_channel_id
         channel_name = message.sender_channel_name
+        if self._pool.is_releasing(channel_id):
+            raise RuntimeError("MelodyPlayer is leaving this channel — try again in a moment")
         spawning = not self._pool.has_channel(channel_id)
 
         if spawning:
@@ -224,10 +238,18 @@ class MumbleOrchestrator:
         if not commands:
             return
 
+        if self._is_exit_noop(channel_id, commands):
+            return
+
         search_tasks = self._handler.start_search_tasks(commands)
 
         try:
-            player = await self._resolve_player_for_message(message)
+            if all(command.name in _EXIT_COMMANDS for command in commands):
+                player = await self._pool.get(channel_id)
+                if player is None:
+                    return
+            else:
+                player = await self._resolve_player_for_message(message)
         except Exception as exc:
             await self._cancel_search_tasks(search_tasks)
             logger.warning("Failed to acquire player for channel message: %s", exc)
@@ -274,10 +296,7 @@ class MumbleOrchestrator:
                     tasks=tasks,
                 )
             if destroy:
-                asyncio.create_task(
-                    self._pool.release(player.channel_id),
-                    name=f"release-{player.channel_id}",
-                )
+                await self._pool.release(player.channel_id)
                 return
         except Exception:
             logger.exception(
