@@ -332,7 +332,9 @@ Melody is built on these projects and protocols:
 | Project | Role in Melody |
 |---------|----------------|
 | [Mumble](https://www.mumble.info/) | Voice chat platform Melody streams audio into ([Murmur](https://wiki.mumble.info/wiki/Murmur) server) |
-| [PyMumble](https://github.com/azlux/pymumble) | Python Mumble client library (`pymumble_py3`) — connections, voice transmission, chat |
+| [PyMumble](https://github.com/azlux/pymumble) | Python Mumble client library (`pymumble_py3`, v1.x) — connections, voice transmission, chat |
+
+Melody pins `pymumble>=1.6.1,<2` because the v2 API is breaking and still stabilizing. See [docs/pymumble2-migration.md](docs/pymumble2-migration.md) for a future migration outline.
 | [Subsonic API](https://www.subsonic.org/pages/api.jsp) | REST API for search, streaming, and library access ([OpenSubsonic](https://opensubsonic.netlify.app/) extensions) |
 | [Navidrome](https://www.navidrome.org/) | Self-hosted music server — primary Subsonic-compatible backend target |
 | [Octo Fiesta](https://github.com/V1ck3s/octo-fiesta) | Subsonic API proxy in front of Navidrome — on-demand streaming-provider tracks |

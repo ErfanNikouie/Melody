@@ -31,8 +31,8 @@ class _Session:
     def set_volume_percent(self, percent: int) -> None:
         self.volume = percent
 
-    async def ensure_joined(self) -> None:
-        return None
+    async def ensure_joined(self) -> bool:
+        return True
 
     async def stop_playback(self, *, clear_all: bool = False) -> None:
         self.stop_waited = True

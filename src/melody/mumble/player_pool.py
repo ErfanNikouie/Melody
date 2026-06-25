@@ -136,8 +136,18 @@ class PlayerPool:
             await player.session.ensure_joined()
             return player, False
 
-        await player.start(self._loop)
-        await player.session.ensure_joined()
+        try:
+            await player.start(self._loop)
+            if not await player.session.ensure_joined():
+                raise RuntimeError(f"MelodyPlayer failed to join channel {channel_name}")
+        except Exception:
+            logger.exception(
+                "Player startup failed channel_id=%s channel_name=%s",
+                channel_id,
+                channel_name,
+            )
+            await self._rollback_failed_acquire(channel_id, player)
+            raise
         logger.info(
             "Player assigned user=%s channel_id=%s channel_name=%s active=%s",
             player.connection.username,
@@ -152,16 +162,13 @@ class PlayerPool:
             player = self._active.pop(channel_id, None)
             if player is None:
                 return
-            if self._settings.player_mode_enum == PlayerMode.POOL:
-                slot = self._slot_by_channel.pop(channel_id, None)
-                if slot is not None:
-                    self._free_slots.append(slot)
-                    self._free_slots.sort()
+            self._return_slot(channel_id)
 
-        await player.stop()
-        logger.info("Player released channel_id=%s active=%s", channel_id, len(self._active))
+        player.connection.set_text_handler(None)
         if self._on_release:
             await self._on_release(channel_id)
+        await player.stop()
+        logger.info("Player released channel_id=%s active=%s", channel_id, len(self._active))
 
     async def get(self, channel_id: int) -> PlayerBot | None:
         async with self._lock:
@@ -187,3 +194,27 @@ class PlayerPool:
         slot = self._free_slots.pop(0)
         self._slot_by_channel[channel_id] = slot
         return f"{prefix}-{slot}", self._settings.player_password
+
+    async def _rollback_failed_acquire(self, channel_id: int, player: PlayerBot) -> None:
+        async with self._lock:
+            if self._active.get(channel_id) is player:
+                self._active.pop(channel_id, None)
+            self._return_slot(channel_id)
+
+        player.connection.set_text_handler(None)
+        if self._on_release:
+            await self._on_release(channel_id)
+
+        try:
+            await player.stop()
+        except Exception:
+            logger.exception("Failed cleaning up player after startup error channel_id=%s", channel_id)
+
+    def _return_slot(self, channel_id: int) -> None:
+        if self._settings.player_mode_enum != PlayerMode.POOL:
+            return
+        slot = self._slot_by_channel.pop(channel_id, None)
+        if slot is None or slot in self._free_slots:
+            return
+        self._free_slots.append(slot)
+        self._free_slots.sort()

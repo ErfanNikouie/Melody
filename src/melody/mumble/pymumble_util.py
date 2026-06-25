@@ -54,6 +54,23 @@ def bind_callbacks(
     mumble.callbacks.set_callback(PYMUMBLE_CLBK_DISCONNECTED, on_disconnected)
 
 
+def clear_callbacks(mumble: Any) -> None:
+    """Best-effort removal of callbacks that can retain Melody objects."""
+    try:
+        from pymumble_py3.constants import (
+            PYMUMBLE_CLBK_CONNECTED,
+            PYMUMBLE_CLBK_DISCONNECTED,
+            PYMUMBLE_CLBK_TEXTMESSAGERECEIVED,
+        )
+
+        mumble.callbacks.set_callback(PYMUMBLE_CLBK_TEXTMESSAGERECEIVED, None)
+        mumble.callbacks.set_callback(PYMUMBLE_CLBK_CONNECTED, None)
+        mumble.callbacks.set_callback(PYMUMBLE_CLBK_DISCONNECTED, None)
+    except Exception:
+        # Teardown should never fail just because pymumble's callback object is already gone.
+        pass
+
+
 def get_session_id(mumble: Any) -> int | None:
     """Return this bot's Mumble session id, if known."""
     session = mumble.users.myself_session

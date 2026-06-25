@@ -87,23 +87,25 @@ class ChannelSession:
     async def send_message(self, message: str) -> None:
         await self._send_message(message)
 
-    async def ensure_joined(self) -> None:
+    async def ensure_joined(self) -> bool:
         if self._joined and self._is_in_channel is not None and await self._is_in_channel():
             self._cancel_grace_timer()
-            return
+            return True
         if self._is_in_channel is not None and await self._is_in_channel():
             self._joined = True
             self._cancel_grace_timer()
-            return
+            return True
         if await self._join_channel():
             self._joined = True
             self._cancel_grace_timer()
+            return True
         else:
             logger.error(
                 "Failed to join channel channel_id=%s channel_name=%s",
                 self.channel_id,
                 self.channel_name,
             )
+            return False
 
     def mark_joined(self) -> None:
         """Mark session as joined without moving (only when join already verified)."""

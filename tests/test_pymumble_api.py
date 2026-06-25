@@ -55,6 +55,35 @@ def test_stereo_players_enable_receive_sound() -> None:
     assert "set_receive_sound(1)" in source
 
 
+def test_clear_callbacks_helper_exists(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, object | None]] = []
+
+    class _Callbacks:
+        def set_callback(self, name: str, handler: object | None) -> None:
+            calls.append((name, handler))
+
+    fake_constants = type(
+        "C",
+        (),
+        {
+            "PYMUMBLE_CLBK_TEXTMESSAGERECEIVED": "text",
+            "PYMUMBLE_CLBK_CONNECTED": "connected",
+            "PYMUMBLE_CLBK_DISCONNECTED": "disconnected",
+        },
+    )()
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "pymumble_py3.constants",
+        fake_constants,
+    )
+
+    from melody.mumble.pymumble_util import clear_callbacks
+
+    mumble = type("M", (), {"callbacks": _Callbacks()})()
+    clear_callbacks(mumble)
+    assert calls == [("text", None), ("connected", None), ("disconnected", None)]
+
+
 def test_load_pymumble_imports_without_deny_error() -> None:
     from melody.mumble.pymumble_util import load_pymumble
 

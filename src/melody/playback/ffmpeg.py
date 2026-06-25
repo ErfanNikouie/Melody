@@ -40,6 +40,8 @@ class FFmpegTranscoder:
 
     async def start(self, *, input_format: str | None = None) -> None:
         """Decode audio from stdin pipe (legacy)."""
+        if self._process is not None:
+            await self.stop()
         ffmpeg = find_ffmpeg()
         args = [
             ffmpeg,
@@ -85,6 +87,8 @@ class FFmpegTranscoder:
         analyzeduration: str = "500k",
     ) -> None:
         """Decode audio directly from an HTTP(S) stream URL."""
+        if self._process is not None:
+            await self.stop()
         ffmpeg = find_ffmpeg()
         args = [
             ffmpeg,

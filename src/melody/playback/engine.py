@@ -61,6 +61,7 @@ class PlaybackEngine:
         self._volume = clamp_volume_percent(starting_volume_percent) / 100.0
         self._active_track: Track | None = None
         self._elapsed_seconds = 0.0
+        self._active_transcoder: FFmpegTranscoder | None = None
 
     @property
     def playback_status(self) -> PlaybackStatus:
@@ -109,12 +110,20 @@ class PlaybackEngine:
             pass
         except TimeoutError:
             logger.warning("Playback task did not stop within %.1fs", timeout)
+            await self._stop_active_transcoder()
             if self._task and not self._task.done():
                 self._task.cancel()
                 try:
                     await self._task
                 except asyncio.CancelledError:
                     pass
+
+    async def _stop_active_transcoder(self) -> None:
+        transcoder = self._active_transcoder
+        if transcoder is None:
+            return
+        self._active_transcoder = None
+        await transcoder.stop()
 
     def pause(self) -> None:
         self._pause_event.clear()
@@ -215,27 +224,18 @@ class PlaybackEngine:
         )
 
         transcoder = FFmpegTranscoder()
+        self._active_transcoder = transcoder
         playback_started = time.monotonic()
-        await transcoder.start_from_url(
-            stream_url,
-            probesize=self._ffmpeg_probesize,
-            analyzeduration=self._ffmpeg_analyzeduration,
-        )
-        self._state = PlaybackState.PLAYING
         frames_sent = 0
-        pcm_iter = transcoder.read_pcm_frames().__aiter__()
-        first_frame_timeout = 30.0
-        pacer = PcmPacer(
-            self._get_buffer_size,
-            frame_duration_sec=FRAME_DURATION_SEC,
-            target_buffer_sec=self._pcm_target_buffer_sec,
-        )
-        loop = asyncio.get_running_loop()
+        pcm_iter = None
         pending_batch: list[bytes] = []
         prebuffer_batch_size = self._pcm_prebuffer_batch_size
         max_prebuffer_frames = self._pcm_max_prebuffer_frames
+        first_frame_timeout = 30.0
 
         async def read_next_frame() -> bytes | None:
+            if pcm_iter is None:
+                return None
             try:
                 if frames_sent == 0:
                     return await asyncio.wait_for(
@@ -280,6 +280,20 @@ class PlaybackEngine:
             pending_batch.clear()
 
         try:
+            await transcoder.start_from_url(
+                stream_url,
+                probesize=self._ffmpeg_probesize,
+                analyzeduration=self._ffmpeg_analyzeduration,
+            )
+            self._state = PlaybackState.PLAYING
+            pcm_iter = transcoder.read_pcm_frames().__aiter__()
+            pacer = PcmPacer(
+                self._get_buffer_size,
+                frame_duration_sec=FRAME_DURATION_SEC,
+                target_buffer_sec=self._pcm_target_buffer_sec,
+            )
+            loop = asyncio.get_running_loop()
+
             while not pacer.primed and not self._stop_event.is_set():
                 if frames_sent >= max_prebuffer_frames:
                     pacer.force_prime(loop)
@@ -309,6 +323,8 @@ class PlaybackEngine:
             if pending_batch and not self._stop_event.is_set():
                 await flush_batch()
             code = await transcoder.stop()
+            if self._active_transcoder is transcoder:
+                self._active_transcoder = None
             if frames_sent == 0:
                 logger.error(
                     "No PCM output for track_id=%s ffmpeg_code=%s stderr=%s",

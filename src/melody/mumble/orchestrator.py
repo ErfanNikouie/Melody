@@ -87,6 +87,11 @@ class MumbleOrchestrator:
                 queue.put_nowait(_SHUTDOWN)
             except asyncio.QueueFull:
                 pass
+            while not queue.empty():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
         if task is not None:
             task.cancel()
             try:
@@ -108,8 +113,7 @@ class MumbleOrchestrator:
         try:
             player = await self._acquire_player_for_message(message, notify=notify)
         except RuntimeError as exc:
-            for task in search_tasks.values():
-                task.cancel()
+            await self._cancel_search_tasks(search_tasks)
             if notify:
                 await notify(str(exc))
             return
@@ -174,8 +178,7 @@ class MumbleOrchestrator:
         try:
             player = await self._acquire_player_for_message(message, notify=None)
         except RuntimeError as exc:
-            for task in search_tasks.values():
-                task.cancel()
+            await self._cancel_search_tasks(search_tasks)
             logger.warning("Failed to acquire player for channel message: %s", exc)
             return
 
@@ -231,9 +234,7 @@ class MumbleOrchestrator:
             else:
                 await player.session.send_message(format_command_failed())
         finally:
-            for task in tasks.values():
-                if not task.done():
-                    task.cancel()
+            await self._cancel_search_tasks(tasks)
 
     def _ensure_player_listener(self, player: PlayerBot) -> None:
         if player.channel_id in self._player_queues:
@@ -251,7 +252,15 @@ class MumbleOrchestrator:
                     player.channel_id,
                 )
 
-        player.connection._on_text = on_player_text  # noqa: SLF001
+        player.connection.set_text_handler(on_player_text)
         self._player_tasks[player.channel_id] = asyncio.create_task(
             self._player_message_loop(player.channel_id, queue)
         )
+
+    async def _cancel_search_tasks(self, tasks: dict[int, SearchTask]) -> None:
+        if not tasks:
+            return
+        for task in tasks.values():
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks.values(), return_exceptions=True)

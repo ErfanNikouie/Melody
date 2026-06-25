@@ -12,6 +12,7 @@ from melody.logging import get_logger
 from melody.mumble.pymumble_util import (
     ParsedTextMessage,
     bind_callbacks,
+    clear_callbacks,
     get_session_id,
     load_pymumble,
     parse_text_message,
@@ -61,6 +62,7 @@ class MumbleConnection:
         self._bot_session_id: int | None = None
         self._post_connect_channel: int | None = None
         self._encoder_ready = False
+        self._accept_events = False
 
     @property
     def username(self) -> str:
@@ -78,9 +80,14 @@ class MumbleConnection:
         """Channel to join automatically after each successful connect."""
         self._post_connect_channel = channel_id
 
+    def set_text_handler(self, handler: TextHandler | None) -> None:
+        """Set or clear the application-level text handler."""
+        self._on_text = handler
+
     async def start(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
         self._ready.clear()
+        self._accept_events = True
         self._thread = threading.Thread(
             target=self._run,
             name=f"mumble-{self._username}",
@@ -90,14 +97,26 @@ class MumbleConnection:
         await self._ready.wait()
 
     async def stop(self) -> None:
+        self._accept_events = False
+        self._on_text = None
         if self._mumble is not None:
+            clear_callbacks(self._mumble)
             self._mumble.exit = True
             await asyncio.to_thread(self._mumble.stop)
         if self._thread is not None and self._thread.is_alive():
             await asyncio.to_thread(self._thread.join, 3.0)
-        self._mumble = None
-        self._thread = None
+            if self._thread.is_alive():
+                logger.error("Mumble thread did not stop user=%s", self._username)
+            else:
+                self._thread = None
+        else:
+            self._thread = None
+        if self._thread is None:
+            self._mumble = None
         self._encoder_ready = False
+        self._loop = None
+        self._on_connected_cb = None
+        self._on_disconnected_cb = None
 
     def _run(self) -> None:
         try:
@@ -169,6 +188,8 @@ class MumbleConnection:
                 self._loop.call_soon_threadsafe(self._ready.set)
 
     def _handle_connected(self) -> None:
+        if not self._accept_events:
+            return
         if self._mumble is not None:
             self._bot_session_id = get_session_id(self._mumble)
         logger.info("Mumble connected user=%s session=%s", self._username, self._bot_session_id)
@@ -242,19 +263,29 @@ class MumbleConnection:
 
     def _handle_disconnected(self) -> None:
         self._encoder_ready = False
+        if not self._accept_events:
+            return
         logger.warning("Mumble disconnected user=%s (will reconnect=%s)", self._username, self._reconnect)
         if self._on_disconnected_cb:
             self._on_disconnected_cb()
 
     def _handle_text(self, mess: Any) -> None:
-        if self._loop is None or self._mumble is None or self._on_text is None:
+        handler = self._on_text
+        loop = self._loop
+        if (
+            not self._accept_events
+            or loop is None
+            or self._mumble is None
+            or handler is None
+        ):
             return
         parsed = parse_text_message(self._mumble, mess)
         if parsed is None:
             return
         if parsed.sender_session == self._bot_session_id:
             return
-        self._loop.call_soon_threadsafe(self._on_text, parsed)
+        if self._accept_events:
+            loop.call_soon_threadsafe(handler, parsed)
 
     async def is_in_channel(self, channel_id: int) -> bool:
         return await asyncio.to_thread(self._is_in_channel_sync, channel_id)
