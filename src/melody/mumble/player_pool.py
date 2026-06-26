@@ -17,6 +17,7 @@ logger = get_logger(__name__)
 
 ReleaseCallback = Callable[[int], Awaitable[None]]
 PlayerCreatedCallback = Callable[["PlayerBot"], None]
+_RELEASE_TIMEOUT = 12.0
 
 
 class PlayerBot:
@@ -201,16 +202,48 @@ class PlayerPool:
             self._return_slot(channel_id)
 
         try:
-            player.session.prepare_for_shutdown()
-            player.connection.set_text_handler(None)
-            self._cancel_occupancy_timer(channel_id)
-            if self._on_release:
-                await self._on_release(channel_id)
-            await player.stop()
+            try:
+                await asyncio.wait_for(
+                    self._disconnect_player(player, channel_id),
+                    timeout=_RELEASE_TIMEOUT,
+                )
+            except TimeoutError:
+                logger.error(
+                    "Player release timed out channel_id=%s — forcing disconnect",
+                    channel_id,
+                )
+                await self._force_disconnect_player(player)
             logger.info("Player released channel_id=%s active=%s", channel_id, len(self._active))
         finally:
             async with self._lock:
                 self._releasing.discard(channel_id)
+
+    async def _disconnect_player(self, player: PlayerBot, channel_id: int) -> None:
+        player.session.prepare_for_shutdown()
+        player.connection.prepare_disconnect()
+        player.connection.set_text_handler(None)
+        self._cancel_occupancy_timer(channel_id)
+        if self._on_release:
+            try:
+                await asyncio.wait_for(self._on_release(channel_id), timeout=3.0)
+            except TimeoutError:
+                logger.warning(
+                    "Player listener shutdown timed out channel_id=%s",
+                    channel_id,
+                )
+        await player.stop()
+
+    async def _force_disconnect_player(self, player: PlayerBot) -> None:
+        player.connection.set_text_handler(None)
+        try:
+            player.session.prepare_for_shutdown()
+        except Exception:
+            logger.exception("Failed preparing forced shutdown channel_id=%s", player.channel_id)
+        player.connection.prepare_disconnect()
+        try:
+            await asyncio.wait_for(player.connection.stop(), timeout=5.0)
+        except Exception:
+            logger.exception("Forced player disconnect failed channel_id=%s", player.channel_id)
 
     async def get(self, channel_id: int) -> PlayerBot | None:
         async with self._lock:

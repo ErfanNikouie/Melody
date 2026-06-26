@@ -33,6 +33,7 @@ _MESSAGE_RETRY_DELAY = 0.15
 _CHANNEL_JOIN_RETRIES = 10
 _CHANNEL_JOIN_DELAY = 0.03
 _PCM_STOP = object()
+_DISCONNECT_TIMEOUT = 4.0
 
 
 class MumbleConnection:
@@ -116,13 +117,19 @@ class MumbleConnection:
         await self._ready.wait()
 
     async def stop(self) -> None:
-        self._accept_events = False
-        self._on_text = None
-        self._stop_pcm_writer()
+        self.prepare_disconnect()
         if self._mumble is not None:
-            clear_callbacks(self._mumble)
-            self._mumble.exit = True
-            await asyncio.to_thread(self._mumble.stop)
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._mumble.stop),
+                    timeout=_DISCONNECT_TIMEOUT,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "mumble.stop timed out user=%s host=%s",
+                    self._username,
+                    self._host,
+                )
         if self._thread is not None and self._thread.is_alive():
             await asyncio.to_thread(self._thread.join, 3.0)
             if self._thread.is_alive():
@@ -138,7 +145,21 @@ class MumbleConnection:
         self._on_connected_cb = None
         self._on_disconnected_cb = None
         self._on_users_changed_cb = None
-        self._sync_executor.shutdown(wait=False, cancel_futures=True)
+        try:
+            self._sync_executor.shutdown(wait=False, cancel_futures=True)
+        except RuntimeError:
+            pass
+
+    def prepare_disconnect(self) -> None:
+        """Stop accepting work and tell pymumble not to reconnect."""
+        self._accept_events = False
+        self._on_text = None
+        self._stop_pcm_writer()
+        if self._mumble is None:
+            return
+        clear_callbacks(self._mumble)
+        self._mumble.reconnect = False
+        self._mumble.exit = True
 
     def _start_pcm_writer(self) -> None:
         if not self._stereo:

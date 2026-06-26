@@ -136,7 +136,15 @@ class MumbleOrchestrator:
             player = await self._acquire_player_for_message(message, notify=notify)
         except Exception as exc:
             await self._cancel_search_tasks(search_tasks)
-            await self._notify_sender(message, notify, str(exc))
+            if message.is_private:
+                await self._notify_sender(message, notify, str(exc))
+            else:
+                await self._reply_in_channel(
+                    message,
+                    channel_id,
+                    str(exc),
+                    notify=notify,
+                )
             return
 
         await self._run_commands(commands, player, message, notify=notify, search_tasks=search_tasks)
@@ -185,6 +193,23 @@ class MumbleOrchestrator:
         )
         self._ensure_player_listener(player)
         return player
+
+    async def _reply_in_channel(
+        self,
+        message: ParsedTextMessage,
+        channel_id: int,
+        text: str,
+        *,
+        notify: NotifyCallback | None = None,
+        player: PlayerBot | None = None,
+    ) -> None:
+        if notify is not None:
+            await notify(text)
+            return
+        if player is not None:
+            await player.session.send_message(text)
+            return
+        await self._coordinator.send_to_channel(channel_id, text)
 
     async def _notify_sender(
         self,
@@ -253,7 +278,7 @@ class MumbleOrchestrator:
         except Exception as exc:
             await self._cancel_search_tasks(search_tasks)
             logger.warning("Failed to acquire player for channel message: %s", exc)
-            await self._notify_sender(message, None, str(exc))
+            await self._reply_in_channel(message, channel_id, str(exc))
             return
 
         notify: NotifyCallback | None = None
