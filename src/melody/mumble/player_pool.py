@@ -18,6 +18,7 @@ logger = get_logger(__name__)
 ReleaseCallback = Callable[[int], Awaitable[None]]
 PlayerCreatedCallback = Callable[["PlayerBot"], None]
 _RELEASE_TIMEOUT = 6.0
+_RELEASE_WAIT_TIMEOUT = 10.0
 
 
 class PlayerBot:
@@ -219,7 +220,7 @@ class PlayerPool:
                 self._releasing.discard(channel_id)
 
     async def _disconnect_player(self, player: PlayerBot, channel_id: int) -> None:
-        await player.session.fast_disconnect()
+        await player.session.shutdown()
         player.connection.prepare_disconnect()
         player.connection.set_text_handler(None)
         self._cancel_occupancy_timer(channel_id)
@@ -233,7 +234,9 @@ class PlayerPool:
     async def _force_disconnect_player(self, player: PlayerBot) -> None:
         player.connection.set_text_handler(None)
         try:
-            await player.session.fast_disconnect()
+            await asyncio.wait_for(player.session.shutdown(), timeout=3.0)
+        except TimeoutError:
+            logger.error("Player shutdown timed out channel_id=%s", player.channel_id)
         except Exception:
             logger.exception("Failed preparing forced shutdown channel_id=%s", player.channel_id)
         player.connection.prepare_disconnect()

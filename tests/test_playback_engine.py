@@ -100,3 +100,49 @@ async def test_stop_playback_unblocks_while_play_item_active() -> None:
     fake.stop.assert_awaited()
     await play_task
     assert engine.state == PlaybackState.IDLE
+
+
+@pytest.mark.asyncio
+async def test_wait_stopped_does_not_clear_newer_playback_task() -> None:
+    engine = PlaybackEngine(
+        subsonic=MagicMock(),
+        queue=QueueManager(),
+        send_pcm=AsyncMock(),
+        get_buffer_size=lambda: 0.0,
+    )
+    old_task = asyncio.create_task(asyncio.sleep(3600))
+    new_task = asyncio.create_task(asyncio.sleep(3600))
+    engine._task = new_task  # noqa: SLF001
+    engine._stopping_task = old_task  # noqa: SLF001
+
+    old_task.cancel()
+    await engine.wait_stopped(timeout=0.1)
+
+    assert engine._task is new_task  # noqa: SLF001
+    assert not new_task.done()
+
+
+@pytest.mark.asyncio
+async def test_stop_snapshots_transcoder_for_wait_stopped() -> None:
+    engine = PlaybackEngine(
+        subsonic=MagicMock(),
+        queue=QueueManager(),
+        send_pcm=AsyncMock(),
+        get_buffer_size=lambda: 0.0,
+    )
+    old_transcoder = MagicMock()
+    old_transcoder.terminate_sync = MagicMock()
+    old_transcoder.stop = AsyncMock(return_value=0)
+    new_transcoder = MagicMock()
+    new_transcoder.stop = AsyncMock(return_value=0)
+
+    engine._active_transcoder = old_transcoder  # noqa: SLF001
+    engine.stop()
+    engine._active_transcoder = new_transcoder  # noqa: SLF001
+
+    await engine.wait_stopped(timeout=0.1)
+
+    old_transcoder.terminate_sync.assert_called_once()
+    old_transcoder.stop.assert_awaited_once()
+    new_transcoder.stop.assert_not_awaited()
+    assert engine._active_transcoder is new_transcoder  # noqa: SLF001

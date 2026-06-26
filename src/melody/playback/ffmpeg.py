@@ -184,6 +184,18 @@ class FFmpegTranscoder:
     def stderr_summary(self) -> str:
         return "; ".join(self._stderr_lines[-5:])
 
+    def terminate_sync(self) -> None:
+        """Kill FFmpeg immediately without waiting (used during engine.stop())."""
+        proc = self._process
+        if proc is None or proc.returncode is not None:
+            return
+        if proc.stdout is not None:
+            try:
+                proc.stdout.feed_eof()
+            except (AttributeError, OSError):
+                pass
+        proc.terminate()
+
     async def stop(self) -> int:
         """Terminate FFmpeg if needed and release subprocess resources."""
         if self._process is None:

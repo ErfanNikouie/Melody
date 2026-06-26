@@ -62,6 +62,8 @@ class PlaybackEngine:
         self._active_track: Track | None = None
         self._elapsed_seconds = 0.0
         self._active_transcoder: FFmpegTranscoder | None = None
+        self._stopping_task: asyncio.Task[None] | None = None
+        self._stopping_transcoder: FFmpegTranscoder | None = None
 
     @property
     def playback_status(self) -> PlaybackStatus:
@@ -98,16 +100,37 @@ class PlaybackEngine:
         self._active_track = None
         self._elapsed_seconds = 0.0
         self._state = PlaybackState.IDLE
-        if self._task and not self._task.done():
-            self._task.cancel()
+        task = self._task
+        if task is not None and not task.done():
+            task.cancel()
+        transcoder = self._active_transcoder
+        if transcoder is not None:
+            self._active_transcoder = None
+            transcoder.terminate_sync()
+        self._stopping_task = task
+        self._stopping_transcoder = transcoder
 
     async def wait_stopped(self, timeout: float = 5.0) -> None:
         """Wait for the playback task and any FFmpeg subprocess to finish."""
-        await self._stop_active_transcoder()
-        task = self._task
+        task = self._stopping_task
+        if task is None:
+            task = self._task
+        transcoder = self._stopping_transcoder
+        if transcoder is None:
+            transcoder = self._active_transcoder
+            if transcoder is not None:
+                self._active_transcoder = None
+        self._stopping_task = None
+        self._stopping_transcoder = None
+
+        if transcoder is not None:
+            await transcoder.stop()
+
         if task is None or task.done():
-            self._task = None
-            self._state = PlaybackState.IDLE
+            if self._task is task:
+                self._task = None
+            if self._task is None:
+                self._state = PlaybackState.IDLE
             return
         try:
             await asyncio.wait_for(task, timeout=timeout)
@@ -122,15 +145,10 @@ class PlaybackEngine:
                 except asyncio.CancelledError:
                     pass
         finally:
-            self._task = None
-            self._state = PlaybackState.IDLE
-
-    async def _stop_active_transcoder(self) -> None:
-        transcoder = self._active_transcoder
-        if transcoder is None:
-            return
-        self._active_transcoder = None
-        await transcoder.stop()
+            if self._task is task:
+                self._task = None
+            if self._task is None:
+                self._state = PlaybackState.IDLE
 
     def pause(self) -> None:
         self._pause_event.clear()
@@ -145,10 +163,7 @@ class PlaybackEngine:
     async def play_current(self, *, announce: bool = True) -> None:
         if self._task and not self._task.done():
             self.stop()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+            await self.wait_stopped(timeout=2.0)
 
         if self._queue.needs_repeat_refill:
             await self._refill_repeat_from_subsonic()

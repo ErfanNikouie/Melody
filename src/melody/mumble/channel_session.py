@@ -158,6 +158,11 @@ class ChannelSession:
         self.engine.stop()
         if clear_all:
             self.queue.clear_all()
+        if self._clear_send_audio is not None:
+            asyncio.create_task(
+                self._clear_send_audio_safe(),
+                name=f"clear-audio-{self.channel_id}",
+            )
 
     def cancel_playback_tasks(self) -> None:
         if self._playback_start_task is not None and not self._playback_start_task.done():
@@ -166,9 +171,10 @@ class ChannelSession:
             self._stop_drain_task.cancel()
 
     async def fast_disconnect(self) -> None:
-        """Stop playback and drop pending teardown without blocking on FFmpeg."""
+        """Stop playback and tear down FFmpeg before the Mumble connection closes."""
         self.prepare_for_shutdown()
         self.cancel_playback_tasks()
+        await self._await_stop_teardown()
         self._joined = False
 
     def schedule_stop_drain(self) -> None:
@@ -180,18 +186,32 @@ class ChannelSession:
             name=f"stop-drain-{self.channel_id}",
         )
 
+    async def _clear_send_audio_safe(self) -> None:
+        if self._clear_send_audio is None:
+            return
+        try:
+            await asyncio.wait_for(self._clear_send_audio(), timeout=1.0)
+        except TimeoutError:
+            logger.warning("Clear send audio timed out channel_id=%s", self.channel_id)
+        except Exception:
+            logger.exception("Clear send audio failed channel_id=%s", self.channel_id)
+
+    async def _await_stop_teardown(self) -> None:
+        """Wait for any in-flight stop drain and finish FFmpeg teardown."""
+        if self._stop_drain_task is not None and not self._stop_drain_task.done():
+            self._stop_drain_task.cancel()
+            try:
+                await self._stop_drain_task
+            except asyncio.CancelledError:
+                pass
+            self._stop_drain_task = None
+        await self.finish_stop()
+
     async def finish_stop(self) -> None:
         """Wait for FFmpeg and clear any unsent Mumble audio."""
         try:
             await self.engine.wait_stopped(timeout=2.0)
-            if self._clear_send_audio is not None:
-                try:
-                    await asyncio.wait_for(self._clear_send_audio(), timeout=1.0)
-                except TimeoutError:
-                    logger.warning(
-                        "Clear send audio timed out channel_id=%s",
-                        self.channel_id,
-                    )
+            await self._clear_send_audio_safe()
         except Exception:
             logger.exception("Playback teardown failed channel_id=%s", self.channel_id)
 
@@ -218,7 +238,7 @@ class ChannelSession:
     async def skip_next(self) -> None:
         self.begin_stop()
         nxt = self.queue.advance()
-        self.schedule_stop_drain()
+        await self._await_stop_teardown()
         if nxt:
             await self.send_message(format_now_playing(nxt.track))
             self.schedule_playback(announce=False)
@@ -228,7 +248,7 @@ class ChannelSession:
     async def skip_back(self) -> None:
         self.begin_stop()
         prev = self.queue.go_back()
-        self.schedule_stop_drain()
+        await self._await_stop_teardown()
         if prev:
             await self.send_message(format_now_playing(prev.track))
             self.schedule_playback(announce=False)
