@@ -21,6 +21,11 @@ class _Session:
         self.stop_waited = False
         self.stop_drained = False
         self.replaced = False
+        self.shutdown_prepared = False
+
+    def prepare_for_shutdown(self) -> None:
+        self.shutdown_prepared = True
+        self.begin_stop(clear_all=True)
 
     async def send_message(self, text: str) -> None:
         self.messages.append(text)
@@ -280,7 +285,7 @@ async def test_album_play_announces_in_channel_when_whispered() -> None:
 
 
 @pytest.mark.asyncio
-async def test_exit_command_replies_before_release() -> None:
+async def test_exit_command_prepares_shutdown_without_blocking() -> None:
     session = _Session()
     handler = CommandHandler(search=object())  # type: ignore[arg-type]
     destroy = await handler.handle(
@@ -289,7 +294,9 @@ async def test_exit_command_replies_before_release() -> None:
     )
 
     assert destroy
-    assert session.messages == ["👋 <b>Leaving the channel…</b>"]
+    assert session.shutdown_prepared
+    assert session.stop_waited
+    assert session.messages == []
 
 
 @pytest.mark.asyncio

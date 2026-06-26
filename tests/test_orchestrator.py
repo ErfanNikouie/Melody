@@ -208,3 +208,188 @@ async def test_stop_is_not_blocked_by_in_flight_play_search() -> None:
 
     blocked.set()
     await asyncio.wait_for(play_task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_skip_next_does_not_block_command_lock_during_teardown() -> None:
+    from melody.models import QueueItem, Track
+    from melody.mumble.channel_session import ChannelSession
+
+    orchestrator = _make_orchestrator()
+    player = _make_player()
+
+    async def send_message(text: str) -> None:
+        return None
+
+    session = ChannelSession(
+        5,
+        "Music",
+        subsonic=MagicMock(),
+        grace_period=60.0,
+        send_pcm=AsyncMock(),
+        send_pcm_batch=AsyncMock(),
+        get_buffer_size=lambda: 0.0,
+        wait_for_audio_encoder=AsyncMock(return_value=True),
+        join_channel=AsyncMock(return_value=True),
+        leave_channel=AsyncMock(),
+        send_message=send_message,
+        on_shutdown=AsyncMock(),
+    )
+    session.queue.play_now(
+        [
+            QueueItem(track=Track(id="1", title="T1", artist="A")),
+            QueueItem(track=Track(id="2", title="T2", artist="A")),
+        ]
+    )
+
+    teardown_started = asyncio.Event()
+    teardown_release = asyncio.Event()
+
+    async def slow_finish_stop() -> None:
+        teardown_started.set()
+        await teardown_release.wait()
+
+    session.finish_stop = slow_finish_stop  # type: ignore[method-assign]
+    player.session = session
+
+    skip_task = asyncio.create_task(
+        orchestrator._run_commands(
+            [ParsedCommand(name="next", query=None, options=MagicMock())],
+            player,
+            ParsedTextMessage(
+                sender_session=1,
+                sender_name="user",
+                message="/next",
+                sender_channel_id=5,
+                sender_channel_name="Music",
+                is_private=False,
+                target_channel_id=5,
+            ),
+            notify=None,
+        )
+    )
+    await asyncio.wait_for(teardown_started.wait(), timeout=1.0)
+
+    list_done = asyncio.Event()
+
+    async def run_list() -> None:
+        await orchestrator._run_commands(
+            [ParsedCommand(name="list", query=None, options=MagicMock())],
+            player,
+            ParsedTextMessage(
+                sender_session=1,
+                sender_name="user",
+                message="/list",
+                sender_channel_id=5,
+                sender_channel_name="Music",
+                is_private=False,
+                target_channel_id=5,
+            ),
+            notify=None,
+        )
+        list_done.set()
+
+    await asyncio.wait_for(run_list(), timeout=1.0)
+    assert list_done.is_set()
+
+    teardown_release.set()
+    await asyncio.wait_for(skip_task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_exit_is_lock_free_and_releases_in_background() -> None:
+    from melody.models import QueueItem, Track
+    from melody.mumble.channel_session import ChannelSession
+
+    orchestrator = _make_orchestrator()
+    player = _make_player()
+    release_started = asyncio.Event()
+    release_done = asyncio.Event()
+
+    messages: list[str] = []
+
+    async def send_message(text: str) -> None:
+        messages.append(text)
+
+    session = ChannelSession(
+        5,
+        "Music",
+        subsonic=MagicMock(),
+        grace_period=60.0,
+        send_pcm=AsyncMock(),
+        send_pcm_batch=AsyncMock(),
+        get_buffer_size=lambda: 0.0,
+        wait_for_audio_encoder=AsyncMock(return_value=True),
+        join_channel=AsyncMock(return_value=True),
+        leave_channel=AsyncMock(),
+        send_message=send_message,
+        on_shutdown=AsyncMock(),
+    )
+    session.queue.play_now([QueueItem(track=Track(id="1", title="T1", artist="A"))])
+    player.session = session
+
+    original_release = orchestrator._pool.release
+
+    async def slow_release(channel_id: int) -> None:
+        release_started.set()
+        await release_done.wait()
+        await original_release(channel_id)
+
+    orchestrator._pool.release = slow_release  # type: ignore[method-assign]
+
+    lock = orchestrator._command_locks[5]
+    await lock.acquire()
+    exit_message = ParsedTextMessage(
+        sender_session=1,
+        sender_name="user",
+        message="/exit",
+        sender_channel_id=5,
+        sender_channel_name="Music",
+        is_private=False,
+        target_channel_id=5,
+    )
+    exit_task = asyncio.create_task(
+        orchestrator._run_commands(
+            [ParsedCommand(name="exit", query=None, options=MagicMock())],
+            player,
+            exit_message,
+            notify=None,
+        )
+    )
+
+    async def wait_for_leaving() -> None:
+        deadline = asyncio.get_running_loop().time() + 1.0
+        while asyncio.get_running_loop().time() < deadline:
+            if any("Leaving" in msg for msg in messages):
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("leaving message not sent")
+
+    await wait_for_leaving()
+
+    list_done = asyncio.Event()
+
+    async def run_list() -> None:
+        await orchestrator._run_commands(
+            [ParsedCommand(name="list", query=None, options=MagicMock())],
+            player,
+            ParsedTextMessage(
+                sender_session=1,
+                sender_name="user",
+                message="/list",
+                sender_channel_id=5,
+                sender_channel_name="Music",
+                is_private=False,
+                target_channel_id=5,
+            ),
+            notify=None,
+        )
+        list_done.set()
+
+    await asyncio.wait_for(run_list(), timeout=1.0)
+    assert list_done.is_set()
+
+    lock.release()
+    await asyncio.wait_for(release_started.wait(), timeout=1.0)
+    release_done.set()
+    await asyncio.wait_for(exit_task, timeout=1.0)

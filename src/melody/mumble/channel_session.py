@@ -70,6 +70,7 @@ class ChannelSession:
         self._joined = False
         self._stop_drain_task: asyncio.Task[None] | None = None
         self._playback_start_task: asyncio.Task[None] | None = None
+        self._skip_restart_task: asyncio.Task[None] | None = None
         self._shutting_down = False
 
         self.engine = PlaybackEngine(
@@ -171,6 +172,8 @@ class ChannelSession:
             self._playback_start_task.cancel()
         if self._stop_drain_task is not None and not self._stop_drain_task.done():
             self._stop_drain_task.cancel()
+        if self._skip_restart_task is not None and not self._skip_restart_task.done():
+            self._skip_restart_task.cancel()
 
     async def fast_disconnect(self) -> None:
         """Stop playback and tear down FFmpeg before the Mumble connection closes."""
@@ -209,6 +212,31 @@ class ChannelSession:
             self._stop_drain_task = None
         await self.finish_stop()
 
+    def _schedule_skip_restart(self, *, announce: bool) -> None:
+        """Teardown FFmpeg in the background, then start the next track."""
+        if self._shutting_down:
+            return
+        if self._skip_restart_task is not None and not self._skip_restart_task.done():
+            self._skip_restart_task.cancel()
+        self._skip_restart_task = asyncio.create_task(
+            self._restart_after_teardown(announce=announce),
+            name=f"skip-restart-{self.channel_id}",
+        )
+
+    async def _restart_after_teardown(self, *, announce: bool) -> None:
+        try:
+            await asyncio.wait_for(self._await_stop_teardown(), timeout=5.0)
+        except TimeoutError:
+            logger.error("Skip teardown timed out channel_id=%s", self.channel_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Skip restart failed channel_id=%s", self.channel_id)
+            return
+        if self._shutting_down:
+            return
+        self.schedule_playback(announce=announce)
+
     async def finish_stop(self) -> None:
         """Wait for FFmpeg and clear any unsent Mumble audio."""
         try:
@@ -240,22 +268,22 @@ class ChannelSession:
     async def skip_next(self) -> None:
         self.begin_stop()
         nxt = self.queue.advance()
-        await self._await_stop_teardown()
         if nxt:
             await self.send_message(format_now_playing(nxt.track))
-            self.schedule_playback(announce=False)
+            self._schedule_skip_restart(announce=False)
         else:
             await self.send_message(format_queue_end())
+            self.schedule_stop_drain()
 
     async def skip_back(self) -> None:
         self.begin_stop()
         prev = self.queue.go_back()
-        await self._await_stop_teardown()
         if prev:
             await self.send_message(format_now_playing(prev.track))
-            self.schedule_playback(announce=False)
+            self._schedule_skip_restart(announce=False)
         else:
             await self.send_message(format_no_previous())
+            self.schedule_stop_drain()
 
     @property
     def volume_percent(self) -> int:

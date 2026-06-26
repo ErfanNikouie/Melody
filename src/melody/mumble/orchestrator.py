@@ -8,7 +8,12 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 
 from melody.commands.handler import CommandHandler, SearchTask
-from melody.commands.messages import format_command_failed, format_joining_channel, format_already_leaving
+from melody.commands.messages import (
+    format_command_failed,
+    format_joining_channel,
+    format_already_leaving,
+    format_leaving_channel,
+)
 from melody.commands.parser import CommandParser
 from melody.config import Settings
 from melody.logging import get_logger
@@ -26,6 +31,7 @@ _PLAYER_QUEUE_MAX = 64
 _SHUTDOWN = object()
 _READ_ONLY_COMMANDS = frozenset({"list", "current", "help"})
 _EXIT_COMMANDS = frozenset({"quit", "exit"})
+_LOCK_FREE_COMMANDS = _READ_ONLY_COMMANDS | _EXIT_COMMANDS
 
 
 class MumbleOrchestrator:
@@ -318,7 +324,7 @@ class MumbleOrchestrator:
         tasks = search_tasks or {}
         lock = self._command_locks[player.channel_id]
         destroy = False
-        needs_lock = any(command.name not in _READ_ONLY_COMMANDS for command in commands)
+        needs_lock = any(command.name not in _LOCK_FREE_COMMANDS for command in commands)
         try:
             if needs_lock and tasks:
                 await self._await_search_tasks(tasks)
@@ -341,7 +347,7 @@ class MumbleOrchestrator:
                 )
             if destroy:
                 asyncio.create_task(
-                    self._pool.release(player.channel_id),
+                    self._fast_release_player(player, message, notify=notify),
                     name=f"release-{player.channel_id}",
                 )
                 return
@@ -385,6 +391,39 @@ class MumbleOrchestrator:
             if destroy:
                 break
         return destroy
+
+    async def _fast_release_player(
+        self,
+        player: PlayerBot,
+        message: ParsedTextMessage,
+        *,
+        notify: NotifyCallback | None,
+    ) -> None:
+        """Reply instantly, then tear down the player connection in the background."""
+        channel_id = player.channel_id
+        player.connection.set_text_handler(None)
+        try:
+            try:
+                await asyncio.wait_for(
+                    self._reply_in_channel(
+                        message,
+                        channel_id,
+                        format_leaving_channel(),
+                        notify=notify,
+                        player=player,
+                    ),
+                    timeout=2.0,
+                )
+            except TimeoutError:
+                logger.warning("Leaving message timed out channel_id=%s", channel_id)
+        finally:
+            try:
+                await self._pool.release(channel_id)
+            except Exception:
+                logger.exception(
+                    "Background player release failed channel_id=%s",
+                    channel_id,
+                )
 
     async def _refresh_player_occupancy(self, player: PlayerBot) -> None:
         try:

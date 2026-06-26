@@ -129,7 +129,10 @@ class PlaybackEngine:
             task = self._task
 
         if transcoder is not None:
-            await transcoder.stop()
+            try:
+                await asyncio.wait_for(transcoder.stop(), timeout=3.0)
+            except TimeoutError:
+                logger.warning("Transcoder stop timed out during playback teardown")
 
         if task is None:
             return

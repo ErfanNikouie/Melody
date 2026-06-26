@@ -8,7 +8,6 @@ from collections.abc import Awaitable, Callable
 
 from melody.commands.messages import (
     format_help,
-    format_leaving_channel,
     format_need_query,
     format_no_playable,
     format_no_results,
@@ -133,7 +132,7 @@ class CommandHandler:
             return False
 
         if name in ("quit", "exit"):
-            await feedback(format_leaving_channel())
+            session.prepare_for_shutdown()
             return True
 
         return False
