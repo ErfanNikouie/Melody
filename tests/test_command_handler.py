@@ -27,8 +27,9 @@ class _Session:
         self.shutdown_prepared = True
         self.begin_stop(clear_all=True)
 
-    async def send_message(self, text: str) -> None:
+    async def send_message(self, text: str) -> bool:
         self.messages.append(text)
+        return True
 
     @property
     def volume_percent(self) -> int:

@@ -218,8 +218,8 @@ async def test_skip_next_does_not_block_command_lock_during_teardown() -> None:
     orchestrator = _make_orchestrator()
     player = _make_player()
 
-    async def send_message(text: str) -> None:
-        return None
+    async def send_message(text: str) -> bool:
+        return True
 
     session = ChannelSession(
         5,
@@ -297,8 +297,9 @@ async def test_exit_is_lock_free_and_releases_in_background() -> None:
 
     messages: list[str] = []
 
-    async def send_message(text: str) -> None:
+    async def send_message(text: str) -> bool:
         messages.append(text)
+        return True
 
     session = ChannelSession(
         5,
@@ -404,8 +405,9 @@ async def test_spawned_coordinator_command_keeps_whisper_notify() -> None:
         *,
         notify,
         search_tasks=None,
+        spawned=False,
     ) -> None:
-        _ = commands, player, message, search_tasks
+        _ = commands, player, message, search_tasks, spawned
         captured["notify"] = notify
 
     orchestrator._acquire_player_for_message = fake_acquire  # type: ignore[method-assign]

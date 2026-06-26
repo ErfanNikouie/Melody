@@ -437,6 +437,10 @@ class MumbleConnection:
                         channel_id,
                         current,
                     )
+                    if attempt < _CHANNEL_JOIN_RETRIES:
+                        time.sleep(_CHANNEL_JOIN_DELAY)
+                        continue
+                    return False
                 logger.info(
                     "Joined channel user=%s channel_id=%s name=%s",
                     self._username,

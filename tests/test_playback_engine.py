@@ -53,14 +53,15 @@ async def test_wait_stopped_kills_active_transcoder_immediately() -> None:
     )
     fake_transcoder = MagicMock()
     fake_transcoder.stop = AsyncMock(return_value=0)
-    fake_transcoder.terminate_sync = MagicMock()
+    fake_transcoder.dispose_sync = MagicMock()
     engine._task = asyncio.create_task(asyncio.sleep(3600))  # noqa: SLF001
     engine._active_transcoder = fake_transcoder  # noqa: SLF001
     engine.stop()
 
     await engine.wait_stopped(timeout=0.01)
 
-    fake_transcoder.stop.assert_awaited_once()
+    fake_transcoder.dispose_sync.assert_called_once()
+    fake_transcoder.stop.assert_not_awaited()
     assert engine._task is None  # noqa: SLF001
     assert engine.state == PlaybackState.IDLE
 
@@ -74,6 +75,7 @@ async def test_stop_playback_unblocks_while_play_item_active() -> None:
 
     fake = MagicMock()
     fake.stop = AsyncMock(return_value=0)
+    fake.dispose_sync = MagicMock()
     fake.stderr_summary.return_value = ""
     fake.read_pcm_frames = MagicMock()
 
@@ -99,7 +101,8 @@ async def test_stop_playback_unblocks_while_play_item_active() -> None:
         engine.stop()
         await engine.wait_stopped(timeout=1.0)
 
-    fake.stop.assert_awaited()
+    fake.dispose_sync.assert_called()
+    fake.stop.assert_not_awaited()
     await play_task
     assert engine.state == PlaybackState.IDLE
 
@@ -134,7 +137,7 @@ async def test_stop_snapshots_transcoder_for_wait_stopped() -> None:
         get_buffer_size=lambda: 0.0,
     )
     old_transcoder = MagicMock()
-    old_transcoder.terminate_sync = MagicMock()
+    old_transcoder.dispose_sync = MagicMock()
     old_transcoder.stop = AsyncMock(return_value=0)
     new_transcoder = MagicMock()
     new_transcoder.stop = AsyncMock(return_value=0)
@@ -145,8 +148,8 @@ async def test_stop_snapshots_transcoder_for_wait_stopped() -> None:
 
     await engine.wait_stopped(timeout=0.1)
 
-    old_transcoder.terminate_sync.assert_called_once()
-    old_transcoder.stop.assert_awaited_once()
+    old_transcoder.dispose_sync.assert_called_once()
+    old_transcoder.stop.assert_not_awaited()
     new_transcoder.stop.assert_not_awaited()
     assert engine._active_transcoder is new_transcoder  # noqa: SLF001
 

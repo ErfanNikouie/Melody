@@ -186,10 +186,6 @@ class FFmpegTranscoder:
     def stderr_summary(self) -> str:
         return "; ".join(self._stderr_lines[-5:])
 
-    def terminate_sync(self) -> None:
-        """Kill FFmpeg immediately without waiting (used during engine.stop())."""
-        self.kill_sync()
-
     def kill_sync(self) -> None:
         """Force-kill FFmpeg and close pipes so readers unblock immediately."""
         proc = self._process
@@ -209,6 +205,17 @@ class FFmpegTranscoder:
         self._terminated = True
         if self._stderr_task is not None and not self._stderr_task.done():
             self._stderr_task.cancel()
+
+    def dispose_sync(self) -> None:
+        """Release FFmpeg resources immediately without awaiting subprocess cleanup."""
+        self.kill_sync()
+        self._process = None
+        self._stderr_task = None
+        self._stderr_lines.clear()
+
+    def terminate_sync(self) -> None:
+        """Kill FFmpeg immediately without waiting (used during engine.stop())."""
+        self.dispose_sync()
 
     async def _release_stderr_task(self) -> None:
         if self._stderr_task and not self._stderr_task.done():

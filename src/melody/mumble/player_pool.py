@@ -95,11 +95,11 @@ class PlayerPool:
             await asyncio.sleep(0.05)
 
     def is_ready(self, channel_id: int) -> bool:
-        """True when a player is connected and can handle channel chat."""
+        """True when a player is connected, in-channel, and can handle channel chat."""
         player = self._active.get(channel_id)
-        if player is None:
+        if player is None or not player.connection.is_connected:
             return False
-        return player.connection.is_connected
+        return player.connection.current_channel_id == channel_id
 
     async def refresh_occupancy(self, channel_id: int) -> None:
         player = self._active.get(channel_id)

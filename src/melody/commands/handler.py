@@ -69,6 +69,7 @@ class CommandHandler:
         *,
         notify: NotifyCallback | None = None,
         search_task: SearchTask | None = None,
+        channel_fallback: NotifyCallback | None = None,
     ) -> bool:
         """Handle command. Returns True if session should be destroyed."""
         name = command.name
@@ -84,7 +85,14 @@ class CommandHandler:
             return False
 
         if name == "play":
-            await self._handle_play(session, command, feedback, notify=notify, search_task=search_task)
+            await self._handle_play(
+                session,
+                command,
+                feedback,
+                notify=notify,
+                search_task=search_task,
+                channel_fallback=channel_fallback,
+            )
             return False
 
         if name == "search":
@@ -181,6 +189,7 @@ class CommandHandler:
         *,
         notify: NotifyCallback | None = None,
         search_task: SearchTask | None = None,
+        channel_fallback: NotifyCallback | None = None,
     ) -> None:
         started = time.monotonic()
         await feedback(format_searching())
@@ -199,7 +208,13 @@ class CommandHandler:
         was_idle = session.queue.is_idle
         session.queue.enqueue(items, **collection)
         if was_idle:
-            await self._announce_playback(match, session, feedback, notify=notify)
+            await session.ensure_joined()
+            await self._announce_playback(
+                match,
+                session,
+                notify=notify,
+                channel_fallback=channel_fallback,
+            )
             session.schedule_playback(announce=False)
         else:
             await feedback(format_queued(match.display_name, match.track_count))
@@ -263,17 +278,18 @@ class CommandHandler:
         self,
         match: SearchMatch,
         session: IChannelSession,
-        feedback: NotifyCallback,
         *,
         notify: NotifyCallback | None,
+        channel_fallback: NotifyCallback | None = None,
     ) -> None:
         """Post a playing announcement; whispered play also posts to channel chat."""
         msg = format_playing(match.display_name, match.track_count)
         if notify:
             await notify(msg)
-            await session.send_message(msg)
-        else:
-            await session.send_message(msg)
+        if await session.send_message(msg):
+            return
+        if channel_fallback is not None:
+            await channel_fallback(msg)
 
     def _apply_queue_options(
         self,

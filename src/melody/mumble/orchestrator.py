@@ -167,6 +167,7 @@ class MumbleOrchestrator:
             message,
             notify=notify,
             search_tasks=search_tasks,
+            spawned=_spawned,
         )
 
     def _is_exit_noop(self, channel_id: int, commands: list[ParsedCommand]) -> bool:
@@ -220,14 +221,15 @@ class MumbleOrchestrator:
         return player, _created
 
     async def _wait_player_ready_for_chat(self, player: PlayerBot) -> None:
-        """Briefly wait until the player can post channel chat after joining."""
-        deadline = asyncio.get_running_loop().time() + 2.0
+        """Wait until the player can post channel chat after joining."""
+        deadline = asyncio.get_running_loop().time() + 5.0
         while asyncio.get_running_loop().time() < deadline:
             if not player.connection.is_connected:
                 await asyncio.sleep(0.05)
                 continue
-            if await player.connection.is_in_channel(player.channel_id):
-                return
+            if await player.session.ensure_joined():
+                if await player.connection.is_in_channel(player.channel_id):
+                    return
             await asyncio.sleep(0.05)
         logger.warning(
             "Player not ready for channel chat channel_id=%s after join",
@@ -344,10 +346,17 @@ class MumbleOrchestrator:
         *,
         notify: NotifyCallback | None,
         search_tasks: dict[int, SearchTask] | None = None,
+        spawned: bool = False,
     ) -> None:
         tasks = search_tasks or {}
         lock = self._command_locks[player.channel_id]
         destroy = False
+        channel_fallback: NotifyCallback | None = None
+        if spawned:
+            channel_id = player.channel_id
+            channel_fallback = lambda text, cid=channel_id: self._coordinator.send_to_channel(
+                cid, text
+            )
         needs_lock = any(command.name not in _LOCK_FREE_COMMANDS for command in commands)
         try:
             if needs_lock and tasks:
@@ -360,6 +369,7 @@ class MumbleOrchestrator:
                         message,
                         notify=notify,
                         tasks=tasks,
+                        channel_fallback=channel_fallback,
                     )
             else:
                 destroy = await self._execute_commands(
@@ -368,6 +378,7 @@ class MumbleOrchestrator:
                     message,
                     notify=notify,
                     tasks=tasks,
+                    channel_fallback=channel_fallback,
                 )
             if destroy:
                 asyncio.create_task(
@@ -396,6 +407,7 @@ class MumbleOrchestrator:
         *,
         notify: NotifyCallback | None,
         tasks: dict[int, SearchTask],
+        channel_fallback: NotifyCallback | None = None,
     ) -> bool:
         destroy = False
         for index, command in enumerate(commands):
@@ -405,6 +417,7 @@ class MumbleOrchestrator:
                 player.session,
                 notify=notify,
                 search_task=tasks.get(index),
+                channel_fallback=channel_fallback,
             )
             logger.debug(
                 "Command %s channel_id=%s ms=%.0f",

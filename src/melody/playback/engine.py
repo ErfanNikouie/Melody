@@ -119,13 +119,14 @@ class PlaybackEngine:
         if transcoder is not None:
             self._active_transcoder = None
             transcoder._released_to_drain = True
-            transcoder.terminate_sync()
-        if task is not None and task.done() and transcoder is None:
+            transcoder.dispose_sync()
+            transcoder = None
+        if task is not None and task.done():
             if self._task is task:
                 self._task = None
             return
-        if task is not None or transcoder is not None:
-            self._pending_drains.append((task, transcoder))
+        if task is not None:
+            self._pending_drains.append((task, None))
             self._schedule_drain_worker()
 
     def _schedule_drain_worker(self) -> None:

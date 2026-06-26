@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 JoinChannelCallback = Callable[[], Awaitable[bool]]
 IsInChannelCallback = Callable[[], Awaitable[bool]]
 LeaveChannelCallback = Callable[[], Awaitable[None]]
-SendMessageCallback = Callable[[str], Awaitable[None]]
+SendMessageCallback = Callable[[str], Awaitable[bool]]
 SendPcmCallback = Callable[[bytes], Awaitable[None]]
 SendPcmBatchCallback = Callable[[list[bytes]], Awaitable[None]]
 GetBufferSizeCallback = Callable[[], float]
@@ -70,6 +70,7 @@ class ChannelSession:
         self._joined = False
         self._stop_drain_task: asyncio.Task[None] | None = None
         self._playback_start_task: asyncio.Task[None] | None = None
+        self._clear_audio_task: asyncio.Task[None] | None = None
         self._shutting_down = False
 
         self.engine = PlaybackEngine(
@@ -90,8 +91,27 @@ class ChannelSession:
     async def _announce_now_playing(self, track: Track) -> None:
         await self.send_message(format_now_playing(track))
 
-    async def send_message(self, message: str) -> None:
-        await self._send_message(message)
+    async def send_message(self, message: str) -> bool:
+        """Post to channel chat, retrying until joined or timeout."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5.0
+        while loop.time() < deadline:
+            await self.ensure_joined()
+            try:
+                result = await self._send_message(message)
+                if result is not False:
+                    return True
+            except Exception:
+                logger.exception(
+                    "Channel message failed channel_id=%s",
+                    self.channel_id,
+                )
+            await asyncio.sleep(0.1)
+        logger.warning(
+            "Channel message not delivered channel_id=%s after retries",
+            self.channel_id,
+        )
+        return False
 
     async def ensure_joined(self) -> bool:
         if self._joined and self._is_in_channel is not None and await self._is_in_channel():
@@ -159,10 +179,18 @@ class ChannelSession:
         if clear_all:
             self.queue.clear_all()
         if self._clear_send_audio is not None:
-            asyncio.create_task(
-                self._clear_send_audio_safe(),
+            if self._clear_audio_task is not None and not self._clear_audio_task.done():
+                return
+            self._clear_audio_task = asyncio.create_task(
+                self._run_clear_audio(),
                 name=f"clear-audio-{self.channel_id}",
             )
+
+    async def _run_clear_audio(self) -> None:
+        try:
+            await self._clear_send_audio_safe()
+        finally:
+            self._clear_audio_task = None
 
     def cancel_playback_tasks(self) -> None:
         if self._playback_start_task is not None and not self._playback_start_task.done():
