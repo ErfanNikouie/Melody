@@ -53,8 +53,10 @@ async def test_wait_stopped_kills_active_transcoder_immediately() -> None:
     )
     fake_transcoder = MagicMock()
     fake_transcoder.stop = AsyncMock(return_value=0)
+    fake_transcoder.terminate_sync = MagicMock()
     engine._task = asyncio.create_task(asyncio.sleep(3600))  # noqa: SLF001
     engine._active_transcoder = fake_transcoder  # noqa: SLF001
+    engine.stop()
 
     await engine.wait_stopped(timeout=0.01)
 
@@ -146,3 +148,23 @@ async def test_stop_snapshots_transcoder_for_wait_stopped() -> None:
     old_transcoder.stop.assert_awaited_once()
     new_transcoder.stop.assert_not_awaited()
     assert engine._active_transcoder is new_transcoder  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_wait_stopped_with_no_task_does_not_clear_active_playback() -> None:
+    engine = PlaybackEngine(
+        subsonic=MagicMock(),
+        queue=QueueManager(),
+        send_pcm=AsyncMock(),
+        get_buffer_size=lambda: 0.0,
+    )
+    active_task = asyncio.create_task(asyncio.sleep(3600))
+    engine._task = active_task  # noqa: SLF001
+
+    await engine.wait_stopped(timeout=0.1)
+
+    assert engine._task is active_task  # noqa: SLF001
+    assert not active_task.done()
+    active_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await active_task

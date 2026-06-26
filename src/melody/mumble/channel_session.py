@@ -128,6 +128,8 @@ class ChannelSession:
         """Start playback without blocking chat command handling."""
         if self._shutting_down:
             return
+        if self._stop_drain_task is not None and not self._stop_drain_task.done():
+            self._stop_drain_task.cancel()
         if self._playback_start_task is not None and not self._playback_start_task.done():
             self._playback_start_task.cancel()
         self._playback_start_task = asyncio.create_task(

@@ -8,7 +8,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 
 from melody.commands.handler import CommandHandler, SearchTask
-from melody.commands.messages import format_command_failed, format_joining_channel
+from melody.commands.messages import format_command_failed, format_joining_channel, format_already_leaving
 from melody.commands.parser import CommandParser
 from melody.config import Settings
 from melody.logging import get_logger
@@ -124,6 +124,13 @@ class MumbleOrchestrator:
 
         channel_id = message.sender_channel_id
         if self._is_exit_noop(channel_id, commands):
+            if all(command.name in _EXIT_COMMANDS for command in commands):
+                if self._pool.is_releasing(channel_id):
+                    await self._reply_in_channel(
+                        message,
+                        channel_id,
+                        format_already_leaving(),
+                    )
             return
 
         notify: NotifyCallback | None = None
@@ -162,8 +169,7 @@ class MumbleOrchestrator:
         existing = await self._pool.get(channel_id)
         if existing is not None and existing.connection.is_connected:
             return existing
-        player, _created = await self._acquire_player_for_message(message, notify=None)
-        return player
+        return await self._acquire_player_for_message(message, notify=None)
 
     async def _acquire_player_for_message(
         self,
@@ -264,6 +270,13 @@ class MumbleOrchestrator:
             return
 
         if self._is_exit_noop(channel_id, commands):
+            if all(command.name in _EXIT_COMMANDS for command in commands):
+                if self._pool.is_releasing(channel_id):
+                    await self._reply_in_channel(
+                        message,
+                        channel_id,
+                        format_already_leaving(),
+                    )
             return
 
         search_tasks = self._handler.start_search_tasks(commands)
@@ -303,6 +316,8 @@ class MumbleOrchestrator:
         destroy = False
         needs_lock = any(command.name not in _READ_ONLY_COMMANDS for command in commands)
         try:
+            if needs_lock and tasks:
+                await self._await_search_tasks(tasks)
             if needs_lock:
                 async with lock:
                     destroy = await self._execute_commands(
@@ -397,6 +412,11 @@ class MumbleOrchestrator:
         self._player_tasks[player.channel_id] = asyncio.create_task(
             self._player_message_loop(player.channel_id, queue)
         )
+
+    async def _await_search_tasks(self, tasks: dict[int, SearchTask]) -> None:
+        pending = [task for task in tasks.values() if not task.done()]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def _cancel_search_tasks(self, tasks: dict[int, SearchTask]) -> None:
         if not tasks:

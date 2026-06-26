@@ -113,20 +113,27 @@ class PlaybackEngine:
     async def wait_stopped(self, timeout: float = 5.0) -> None:
         """Wait for the playback task and any FFmpeg subprocess to finish."""
         task = self._stopping_task
-        if task is None:
-            task = self._task
         transcoder = self._stopping_transcoder
+        self._stopping_task = None
+        self._stopping_transcoder = None
+
+        if task is None and transcoder is None:
+            return
+
         if transcoder is None:
             transcoder = self._active_transcoder
             if transcoder is not None:
                 self._active_transcoder = None
-        self._stopping_task = None
-        self._stopping_transcoder = None
+
+        if task is None:
+            task = self._task
 
         if transcoder is not None:
             await transcoder.stop()
 
-        if task is None or task.done():
+        if task is None:
+            return
+        if task.done():
             if self._task is task:
                 self._task = None
             if self._task is None:

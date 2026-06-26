@@ -103,6 +103,10 @@ def format_leaving_channel() -> str:
     return "👋 <b>Leaving the channel…</b>"
 
 
+def format_already_leaving() -> str:
+    return "⏳ <b>Already leaving</b> — please wait…"
+
+
 def format_left_channel() -> str:
     """Deprecated alias for :func:`format_leaving_channel`."""
     return format_leaving_channel()

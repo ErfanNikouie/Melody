@@ -220,9 +220,9 @@ class PlayerPool:
                 self._releasing.discard(channel_id)
 
     async def _disconnect_player(self, player: PlayerBot, channel_id: int) -> None:
-        await player.session.shutdown()
-        player.connection.prepare_disconnect()
         player.connection.set_text_handler(None)
+        player.connection.prepare_disconnect()
+        await player.session.shutdown()
         self._cancel_occupancy_timer(channel_id)
         if self._on_release:
             asyncio.create_task(
@@ -233,13 +233,13 @@ class PlayerPool:
 
     async def _force_disconnect_player(self, player: PlayerBot) -> None:
         player.connection.set_text_handler(None)
+        player.connection.prepare_disconnect()
         try:
             await asyncio.wait_for(player.session.shutdown(), timeout=3.0)
         except TimeoutError:
             logger.error("Player shutdown timed out channel_id=%s", player.channel_id)
         except Exception:
             logger.exception("Failed preparing forced shutdown channel_id=%s", player.channel_id)
-        player.connection.prepare_disconnect()
         try:
             await asyncio.wait_for(player.connection.stop(), timeout=3.0)
         except Exception:
