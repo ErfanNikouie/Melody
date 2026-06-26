@@ -51,8 +51,8 @@ class MumbleOrchestrator:
         self._player_tasks: dict[int, asyncio.Task[None]] = {}
         self._occupancy_task: asyncio.Task[None] | None = None
         self._command_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._listener_connection_ids: dict[int, int] = {}
         pool.set_on_release(self._on_player_released)
-        pool.set_on_player_created(self._ensure_player_listener)
 
     async def start(self, loop: asyncio.AbstractEventLoop) -> None:
         self._pool.set_loop(loop)
@@ -89,6 +89,7 @@ class MumbleOrchestrator:
 
     async def _on_player_released(self, channel_id: int) -> None:
         self._command_locks.pop(channel_id, None)
+        self._listener_connection_ids.pop(channel_id, None)
         await self._shutdown_player_listener(channel_id)
 
     async def _shutdown_player_listener(self, channel_id: int) -> None:
@@ -166,8 +167,10 @@ class MumbleOrchestrator:
         channel_id = message.sender_channel_id
         if self._pool.is_releasing(channel_id):
             raise RuntimeError("MelodyPlayer is leaving this channel — try again in a moment")
+        await self._pool.wait_until_released(channel_id)
         existing = await self._pool.get(channel_id)
         if existing is not None and existing.connection.is_connected:
+            await self._ensure_player_listener(existing)
             return existing
         return await self._acquire_player_for_message(message, notify=None)
 
@@ -181,6 +184,7 @@ class MumbleOrchestrator:
         channel_name = message.sender_channel_name
         if self._pool.is_releasing(channel_id):
             raise RuntimeError("MelodyPlayer is leaving this channel — try again in a moment")
+        await self._pool.wait_until_released(channel_id)
         spawning = not self._pool.has_channel(channel_id)
 
         if spawning:
@@ -197,7 +201,7 @@ class MumbleOrchestrator:
             _created,
             (time.monotonic() - started) * 1000,
         )
-        self._ensure_player_listener(player)
+        await self._ensure_player_listener(player)
         return player
 
     async def _reply_in_channel(
@@ -392,12 +396,21 @@ class MumbleOrchestrator:
                 player.channel_id,
             )
 
-    def _ensure_player_listener(self, player: PlayerBot) -> None:
-        if player.channel_id in self._player_queues:
+    async def _ensure_player_listener(self, player: PlayerBot) -> None:
+        channel_id = player.channel_id
+        connection_id = id(player.connection)
+        if (
+            channel_id in self._player_queues
+            and self._listener_connection_ids.get(channel_id) == connection_id
+        ):
             return
 
+        if channel_id in self._player_queues:
+            await self._shutdown_player_listener(channel_id)
+
         queue: asyncio.Queue[ParsedTextMessage | object] = asyncio.Queue(maxsize=_PLAYER_QUEUE_MAX)
-        self._player_queues[player.channel_id] = queue
+        self._player_queues[channel_id] = queue
+        self._listener_connection_ids[channel_id] = connection_id
 
         def on_player_text(msg: ParsedTextMessage) -> None:
             try:
@@ -409,8 +422,9 @@ class MumbleOrchestrator:
                 )
 
         player.connection.set_text_handler(on_player_text)
-        self._player_tasks[player.channel_id] = asyncio.create_task(
-            self._player_message_loop(player.channel_id, queue)
+        self._player_tasks[channel_id] = asyncio.create_task(
+            self._player_message_loop(channel_id, queue),
+            name=f"player-listener-{channel_id}",
         )
 
     async def _await_search_tasks(self, tasks: dict[int, SearchTask]) -> None:

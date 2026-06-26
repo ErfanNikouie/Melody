@@ -86,6 +86,14 @@ class PlayerPool:
     def is_releasing(self, channel_id: int) -> bool:
         return channel_id in self._releasing
 
+    async def wait_until_released(self, channel_id: int, timeout: float = _RELEASE_WAIT_TIMEOUT) -> None:
+        """Wait for an in-flight player release before spawning a replacement."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while channel_id in self._releasing:
+            if asyncio.get_running_loop().time() >= deadline:
+                raise RuntimeError("MelodyPlayer is still leaving this channel — try again in a moment")
+            await asyncio.sleep(0.05)
+
     def is_ready(self, channel_id: int) -> bool:
         """True when a player is connected and can handle channel chat."""
         player = self._active.get(channel_id)
@@ -225,10 +233,7 @@ class PlayerPool:
         await player.session.shutdown()
         self._cancel_occupancy_timer(channel_id)
         if self._on_release:
-            asyncio.create_task(
-                self._on_release(channel_id),
-                name=f"release-listener-{channel_id}",
-            )
+            await self._on_release(channel_id)
         await player.connection.stop()
 
     async def _force_disconnect_player(self, player: PlayerBot) -> None:
@@ -240,6 +245,15 @@ class PlayerPool:
             logger.error("Player shutdown timed out channel_id=%s", player.channel_id)
         except Exception:
             logger.exception("Failed preparing forced shutdown channel_id=%s", player.channel_id)
+        self._cancel_occupancy_timer(player.channel_id)
+        if self._on_release:
+            try:
+                await asyncio.wait_for(self._on_release(player.channel_id), timeout=2.0)
+            except TimeoutError:
+                logger.error(
+                    "Release listener timed out channel_id=%s",
+                    player.channel_id,
+                )
         try:
             await asyncio.wait_for(player.connection.stop(), timeout=3.0)
         except Exception:
