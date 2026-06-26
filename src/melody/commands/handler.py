@@ -217,7 +217,14 @@ class CommandHandler:
             )
             session.schedule_playback(announce=False)
         else:
-            await feedback(format_queued(match.display_name, match.track_count))
+
+            async def _announce_queued() -> None:
+                try:
+                    await feedback(format_queued(match.display_name, match.track_count))
+                except Exception:
+                    logger.exception("Queued announcement failed")
+
+            asyncio.create_task(_announce_queued(), name="queue-announce")
 
         logger.debug(
             "Play command finished channel_id=%s total_ms=%.0f",

@@ -83,6 +83,7 @@ class MumbleConnection:
         )
         self._pcm_queue: queue.SimpleQueue[object] = queue.SimpleQueue()
         self._pcm_writer: threading.Thread | None = None
+        self._cached_send_buffer_sec = 0.0
 
     @property
     def username(self) -> str:
@@ -602,6 +603,7 @@ class MumbleConnection:
             return
         for data in chunks:
             self._mumble.send_audio.add_sound(data)
+        self._refresh_send_buffer_cache()
 
     def _send_pcm_sync(self, data: bytes) -> None:
         if self._mumble is None or not self._has_send_audio():
@@ -610,11 +612,20 @@ class MumbleConnection:
             logger.warning("Dropped PCM user=%s (Opus encoder not ready)", self._username)
             return
         self._mumble.send_audio.add_sound(data)
+        self._refresh_send_buffer_cache()
+
+    def _refresh_send_buffer_cache(self) -> None:
+        if self._mumble is None or not self._has_send_audio():
+            self._cached_send_buffer_sec = 0.0
+            return
+        try:
+            self._cached_send_buffer_sec = float(self._mumble.send_audio.get_buffer_size())
+        except Exception:
+            pass
 
     def get_buffer_size(self) -> float:
-        if self._mumble is None or not self._has_send_audio():
-            return 0.0
-        return self._mumble.send_audio.get_buffer_size()
+        """Return last PCM buffer depth (updated on the PCM writer thread)."""
+        return self._cached_send_buffer_sec
 
     async def clear_send_audio(self) -> None:
         self._drain_pcm_queue()

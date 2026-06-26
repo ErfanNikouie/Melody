@@ -182,6 +182,7 @@ async def test_play_when_busy_shows_queued() -> None:
         ParsedCommand(name="play", options=CommandOptions(), query="song"),
         session,  # type: ignore[arg-type]
     )
+    await asyncio.sleep(0)
 
     assert any("Queued" in text for text in session.messages)
 

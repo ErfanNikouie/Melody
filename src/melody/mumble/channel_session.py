@@ -93,6 +93,16 @@ class ChannelSession:
 
     async def send_message(self, message: str) -> bool:
         """Post to channel chat, retrying until joined or timeout."""
+        if self._joined:
+            try:
+                result = await self._send_message(message)
+                if result is not False:
+                    return True
+            except Exception:
+                logger.exception(
+                    "Channel message failed channel_id=%s",
+                    self.channel_id,
+                )
         loop = asyncio.get_running_loop()
         deadline = loop.time() + 5.0
         while loop.time() < deadline:
