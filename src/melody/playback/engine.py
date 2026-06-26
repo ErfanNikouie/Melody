@@ -128,8 +128,12 @@ class PlaybackEngine:
     async def _drain_worker_loop(self) -> None:
         try:
             while self._pending_drains:
-                task, transcoder = self._pending_drains.pop(0)
-                await self._drain_snapshot(task, transcoder)
+                batch: list[tuple[asyncio.Task[None] | None, FFmpegTranscoder | None]] = []
+                while self._pending_drains and len(batch) < 8:
+                    batch.append(self._pending_drains.pop(0))
+                await asyncio.gather(
+                    *[self._drain_snapshot(task, transcoder) for task, transcoder in batch]
+                )
         finally:
             self._drain_worker = None
             if self._pending_drains:
@@ -140,8 +144,8 @@ class PlaybackEngine:
         task: asyncio.Task[None] | None,
         transcoder: FFmpegTranscoder | None,
         *,
-        task_timeout: float = 2.0,
-        transcoder_timeout: float = 3.0,
+        task_timeout: float = 0.15,
+        transcoder_timeout: float = 0.5,
     ) -> None:
         if transcoder is not None:
             try:
@@ -152,6 +156,12 @@ class PlaybackEngine:
         if task is None:
             return
         if task.done():
+            if self._task is task:
+                self._task = None
+            if self._task is None:
+                self._state = PlaybackState.IDLE
+            return
+        if task.cancelled() or task.cancelling():
             if self._task is task:
                 self._task = None
             if self._task is None:
@@ -175,7 +185,7 @@ class PlaybackEngine:
             if self._task is None:
                 self._state = PlaybackState.IDLE
 
-    async def wait_stopped(self, timeout: float = 5.0) -> None:
+    async def wait_stopped(self, timeout: float = 2.0) -> None:
         """Wait for all queued FFmpeg/playback teardown work to finish."""
         deadline = asyncio.get_running_loop().time() + timeout
         while self._pending_drains or (
@@ -389,26 +399,30 @@ class PlaybackEngine:
         finally:
             if pending_batch and not self._stop_event.is_set():
                 await flush_batch()
-            code = await transcoder.stop()
-            if self._active_transcoder is transcoder:
-                self._active_transcoder = None
-            if frames_sent == 0:
-                logger.error(
-                    "No PCM output for track_id=%s ffmpeg_code=%s stderr=%s",
-                    track.id,
-                    code,
-                    transcoder.stderr_summary(),
-                )
+            if getattr(transcoder, "_terminated", False) is True:
+                if self._active_transcoder is transcoder:
+                    self._active_transcoder = None
             else:
-                logger.info(
-                    "Finished playback track_id=%s pcm_frames=%s",
-                    track.id,
-                    frames_sent,
-                )
-            if code not in (0, -15, 255) and not self._stop_event.is_set():
-                logger.warning(
-                    "FFmpeg exited code=%s track_id=%s stderr=%s",
-                    code,
-                    track.id,
-                    transcoder.stderr_summary(),
-                )
+                code = await transcoder.stop()
+                if self._active_transcoder is transcoder:
+                    self._active_transcoder = None
+                if frames_sent == 0:
+                    logger.error(
+                        "No PCM output for track_id=%s ffmpeg_code=%s stderr=%s",
+                        track.id,
+                        code,
+                        transcoder.stderr_summary(),
+                    )
+                else:
+                    logger.info(
+                        "Finished playback track_id=%s pcm_frames=%s",
+                        track.id,
+                        frames_sent,
+                    )
+                if code not in (0, -15, 255) and not self._stop_event.is_set():
+                    logger.warning(
+                        "FFmpeg exited code=%s track_id=%s stderr=%s",
+                        code,
+                        track.id,
+                        transcoder.stderr_summary(),
+                    )

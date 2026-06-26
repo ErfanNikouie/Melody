@@ -128,8 +128,6 @@ class ChannelSession:
         """Start playback without blocking chat command handling."""
         if self._shutting_down:
             return
-        if self._stop_drain_task is not None and not self._stop_drain_task.done():
-            self._stop_drain_task.cancel()
         if self._playback_start_task is not None and not self._playback_start_task.done():
             self._playback_start_task.cancel()
         self._playback_start_task = asyncio.create_task(
@@ -212,7 +210,7 @@ class ChannelSession:
     async def finish_stop(self) -> None:
         """Wait for FFmpeg and clear any unsent Mumble audio."""
         try:
-            await self.engine.wait_stopped(timeout=2.0)
+            await self.engine.wait_stopped(timeout=1.0)
             await self._clear_send_audio_safe()
         except Exception:
             logger.exception("Playback teardown failed channel_id=%s", self.channel_id)
@@ -237,25 +235,35 @@ class ChannelSession:
         if self.queue.current and self.engine.state.value in ("idle", "paused"):
             self.schedule_playback(announce=False)
 
-    async def skip_next(self) -> None:
+    async def skip_next(self, *, notify: Callable[[str], Awaitable[None]] | None = None) -> None:
         self.begin_stop()
+        self.schedule_stop_drain()
         nxt = self.queue.advance()
         if nxt:
-            await self.send_message(format_now_playing(nxt.track))
+            await self._command_reply(notify, format_now_playing(nxt.track))
             self.schedule_playback(announce=False)
         else:
-            await self.send_message(format_queue_end())
-            self.schedule_stop_drain()
+            await self._command_reply(notify, format_queue_end())
 
-    async def skip_back(self) -> None:
+    async def skip_back(self, *, notify: Callable[[str], Awaitable[None]] | None = None) -> None:
         self.begin_stop()
+        self.schedule_stop_drain()
         prev = self.queue.go_back()
         if prev:
-            await self.send_message(format_now_playing(prev.track))
+            await self._command_reply(notify, format_now_playing(prev.track))
             self.schedule_playback(announce=False)
         else:
-            await self.send_message(format_no_previous())
-            self.schedule_stop_drain()
+            await self._command_reply(notify, format_no_previous())
+
+    async def _command_reply(
+        self,
+        notify: Callable[[str], Awaitable[None]] | None,
+        text: str,
+    ) -> None:
+        if notify is not None:
+            await notify(text)
+        else:
+            await self.send_message(text)
 
     @property
     def volume_percent(self) -> int:

@@ -147,7 +147,7 @@ class MumbleOrchestrator:
         search_tasks = self._handler.start_search_tasks(commands)
 
         try:
-            player, spawned = await self._acquire_player_for_message(message, notify=notify)
+            player, _spawned = await self._acquire_player_for_message(message, notify=notify)
         except Exception as exc:
             await self._cancel_search_tasks(search_tasks)
             if message.is_private:
@@ -161,13 +161,11 @@ class MumbleOrchestrator:
                 )
             return
 
-        # First spawn posts "Joining…" to channel — command replies must go there too.
-        command_notify = None if spawned else notify
         await self._run_commands(
             commands,
             player,
             message,
-            notify=command_notify,
+            notify=notify,
             search_tasks=search_tasks,
         )
 

@@ -165,6 +165,7 @@ async def test_play_shows_searching_and_queues_track() -> None:
     assert not session.stop_waited
     assert notified[0] == "🔍 <b>Searching</b>…"
     assert any("Playing" in text for text in notified)
+    assert any("Playing" in text for text in session.messages)
     assert session.queue.current is not None
 
 

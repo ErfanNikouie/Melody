@@ -108,11 +108,11 @@ class CommandHandler:
             return False
 
         if name == "next":
-            await session.skip_next()
+            await session.skip_next(notify=notify)
             return False
 
         if name == "back":
-            await session.skip_back()
+            await session.skip_back(notify=notify)
             return False
 
         if name == "list":
@@ -267,14 +267,13 @@ class CommandHandler:
         *,
         notify: NotifyCallback | None,
     ) -> None:
-        """Post a playing announcement; album/playlist also go to channel chat when whispered."""
+        """Post a playing announcement; whispered play also posts to channel chat."""
         msg = format_playing(match.display_name, match.track_count)
-        if match.kind in ("album", "playlist"):
+        if notify:
+            await notify(msg)
             await session.send_message(msg)
-            if notify:
-                await notify(msg)
         else:
-            await feedback(msg)
+            await session.send_message(msg)
 
     def _apply_queue_options(
         self,

@@ -33,6 +33,7 @@ class FFmpegTranscoder:
         self._process: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._stderr_lines: list[str] = []
+        self._terminated = False
 
     @property
     def pcm_frame_bytes(self) -> int:
@@ -195,12 +196,27 @@ class FFmpegTranscoder:
             except (AttributeError, OSError):
                 pass
         proc.terminate()
+        self._terminated = True
+
+    async def _release_stderr_task(self) -> None:
+        if self._stderr_task and not self._stderr_task.done():
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except asyncio.CancelledError:
+                pass
+        self._stderr_task = None
 
     async def stop(self) -> int:
         """Terminate FFmpeg if needed and release subprocess resources."""
         if self._process is None:
             return -1
         proc = self._process
+        if proc.returncode is not None:
+            code = proc.returncode
+            await self._release_stderr_task()
+            self._process = None
+            return code
         if proc.stdout is not None:
             try:
                 proc.stdout.feed_eof()
@@ -209,17 +225,11 @@ class FFmpegTranscoder:
         if proc.returncode is None:
             proc.terminate()
             try:
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
+                await asyncio.wait_for(proc.wait(), timeout=1.0)
             except TimeoutError:
                 proc.kill()
                 await proc.wait()
-        if self._stderr_task and not self._stderr_task.done():
-            self._stderr_task.cancel()
-            try:
-                await self._stderr_task
-            except asyncio.CancelledError:
-                pass
+        await self._release_stderr_task()
         code = proc.returncode if proc.returncode is not None else -1
         self._process = None
-        self._stderr_task = None
         return code

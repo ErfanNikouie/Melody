@@ -385,7 +385,7 @@ async def test_exit_is_lock_free_and_releases_in_background() -> None:
 
 
 @pytest.mark.asyncio
-async def test_spawned_coordinator_command_replies_in_channel() -> None:
+async def test_spawned_coordinator_command_keeps_whisper_notify() -> None:
     orchestrator = _make_orchestrator()
     captured: dict[str, NotifyCallback | None] = {}
 
@@ -424,4 +424,4 @@ async def test_spawned_coordinator_command_replies_in_channel() -> None:
 
     await orchestrator._dispatch_coordinator_text(message)
 
-    assert captured["notify"] is None
+    assert captured["notify"] is not None

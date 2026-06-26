@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol
 
 from melody.models import Album, PlaybackStatus, Playlist, Track
@@ -72,9 +72,17 @@ class IChannelSession(Protocol):
 
     async def resume(self) -> None: ...
 
-    async def skip_next(self) -> None: ...
+    async def skip_next(
+        self,
+        *,
+        notify: Callable[[str], Awaitable[None]] | None = None,
+    ) -> None: ...
 
-    async def skip_back(self) -> None: ...
+    async def skip_back(
+        self,
+        *,
+        notify: Callable[[str], Awaitable[None]] | None = None,
+    ) -> None: ...
 
     @property
     def volume_percent(self) -> int: ...
