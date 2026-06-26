@@ -34,6 +34,7 @@ class FFmpegTranscoder:
         self._stderr_task: asyncio.Task[None] | None = None
         self._stderr_lines: list[str] = []
         self._terminated = False
+        self._released_to_drain = False
 
     @property
     def pcm_frame_bytes(self) -> int:
@@ -187,16 +188,27 @@ class FFmpegTranscoder:
 
     def terminate_sync(self) -> None:
         """Kill FFmpeg immediately without waiting (used during engine.stop())."""
+        self.kill_sync()
+
+    def kill_sync(self) -> None:
+        """Force-kill FFmpeg and close pipes so readers unblock immediately."""
         proc = self._process
-        if proc is None or proc.returncode is not None:
+        if proc is None:
             return
-        if proc.stdout is not None:
+        for stream in (proc.stdout, proc.stderr, proc.stdin):
+            if stream is not None:
+                try:
+                    stream.close()
+                except (AttributeError, OSError):
+                    pass
+        if proc.returncode is None:
             try:
-                proc.stdout.feed_eof()
-            except (AttributeError, OSError):
+                proc.kill()
+            except ProcessLookupError:
                 pass
-        proc.terminate()
         self._terminated = True
+        if self._stderr_task is not None and not self._stderr_task.done():
+            self._stderr_task.cancel()
 
     async def _release_stderr_task(self) -> None:
         if self._stderr_task and not self._stderr_task.done():

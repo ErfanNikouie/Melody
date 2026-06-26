@@ -210,10 +210,14 @@ class ChannelSession:
     async def finish_stop(self) -> None:
         """Wait for FFmpeg and clear any unsent Mumble audio."""
         try:
-            await self.engine.wait_stopped(timeout=1.0)
+            pending = self.engine.pending_drain_count
+            timeout = min(5.0, max(1.5, pending * 0.75))
+            await self.engine.wait_stopped(timeout=timeout)
             await self._clear_send_audio_safe()
         except Exception:
             logger.exception("Playback teardown failed channel_id=%s", self.channel_id)
+        finally:
+            self._stop_drain_task = None
 
     async def stop_playback(self, *, clear_all: bool = False) -> None:
         self.begin_stop(clear_all=clear_all)

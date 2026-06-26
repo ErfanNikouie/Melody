@@ -184,6 +184,52 @@ async def test_play_current_starts_without_waiting_for_drain() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stop_increments_playback_generation() -> None:
+    engine = PlaybackEngine(
+        subsonic=MagicMock(),
+        queue=QueueManager(),
+        send_pcm=AsyncMock(),
+        get_buffer_size=lambda: 0.0,
+    )
+    generation = engine._playback_generation  # noqa: SLF001
+    engine.stop()
+    assert engine._playback_generation == generation + 1  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_is_stopped_uses_generation_not_reset_event() -> None:
+    engine = PlaybackEngine(
+        subsonic=MagicMock(),
+        queue=QueueManager(),
+        send_pcm=AsyncMock(),
+        get_buffer_size=lambda: 0.0,
+    )
+    generation = engine._playback_generation  # noqa: SLF001
+    engine.stop()
+    assert engine._is_stopped(generation)
+    assert not engine._is_stopped(engine._playback_generation)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_wait_stopped_schedules_worker_for_pending_drains() -> None:
+    engine = PlaybackEngine(
+        subsonic=MagicMock(),
+        queue=QueueManager(),
+        send_pcm=AsyncMock(),
+        get_buffer_size=lambda: 0.0,
+    )
+    fake_transcoder = MagicMock()
+    fake_transcoder.stop = AsyncMock(return_value=0)
+    fake_transcoder.kill_sync = MagicMock()
+    engine._pending_drains.append((None, fake_transcoder))  # noqa: SLF001
+
+    await engine.wait_stopped(timeout=0.5)
+
+    fake_transcoder.stop.assert_awaited_once()
+    assert not engine._pending_drains  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_wait_stopped_with_no_task_does_not_clear_active_playback() -> None:
     engine = PlaybackEngine(
         subsonic=MagicMock(),

@@ -54,7 +54,7 @@ class PlaybackEngine:
         self._pcm_prebuffer_batch_size = pcm_prebuffer_batch_size
         self._state = PlaybackState.IDLE
         self._task: asyncio.Task[None] | None = None
-        self._stop_event = asyncio.Event()
+        self._playback_generation = 0
         self._pause_event = asyncio.Event()
         self._pause_event.set()
         self._announce_next_track = True
@@ -96,8 +96,18 @@ class PlaybackEngine:
     def state(self) -> PlaybackState:
         return self._state
 
+    def _is_stopped(self, generation: int) -> bool:
+        return self._playback_generation != generation
+
+    @property
+    def pending_drain_count(self) -> int:
+        count = len(self._pending_drains)
+        if self._drain_worker is not None and not self._drain_worker.done():
+            count += 1
+        return count
+
     def stop(self) -> None:
-        self._stop_event.set()
+        self._playback_generation += 1
         self._pause_event.set()
         self._active_track = None
         self._elapsed_seconds = 0.0
@@ -108,7 +118,12 @@ class PlaybackEngine:
         transcoder = self._active_transcoder
         if transcoder is not None:
             self._active_transcoder = None
+            transcoder._released_to_drain = True
             transcoder.terminate_sync()
+        if task is not None and task.done() and transcoder is None:
+            if self._task is task:
+                self._task = None
+            return
         if task is not None or transcoder is not None:
             self._pending_drains.append((task, transcoder))
             self._schedule_drain_worker()
@@ -144,24 +159,23 @@ class PlaybackEngine:
         task: asyncio.Task[None] | None,
         transcoder: FFmpegTranscoder | None,
         *,
-        task_timeout: float = 0.15,
-        transcoder_timeout: float = 0.5,
+        task_timeout: float = 0.25,
+        transcoder_timeout: float = 0.75,
     ) -> None:
         if transcoder is not None:
             try:
                 await asyncio.wait_for(transcoder.stop(), timeout=transcoder_timeout)
             except TimeoutError:
-                logger.warning("Background transcoder drain timed out")
+                logger.warning("Background transcoder drain timed out; force killing")
+                transcoder.kill_sync()
+                try:
+                    await asyncio.wait_for(transcoder.stop(), timeout=0.1)
+                except TimeoutError:
+                    pass
 
         if task is None:
             return
         if task.done():
-            if self._task is task:
-                self._task = None
-            if self._task is None:
-                self._state = PlaybackState.IDLE
-            return
-        if task.cancelled() or task.cancelling():
             if self._task is task:
                 self._task = None
             if self._task is None:
@@ -185,26 +199,61 @@ class PlaybackEngine:
             if self._task is None:
                 self._state = PlaybackState.IDLE
 
+    async def _force_drain_pending(self) -> None:
+        """Synchronously tear down anything left in the drain queue."""
+        if self._drain_worker is not None and not self._drain_worker.done():
+            self._drain_worker.cancel()
+            try:
+                await self._drain_worker
+            except asyncio.CancelledError:
+                pass
+            self._drain_worker = None
+        while self._pending_drains:
+            task, transcoder = self._pending_drains.pop(0)
+            if transcoder is not None:
+                transcoder.kill_sync()
+                try:
+                    await asyncio.wait_for(transcoder.stop(), timeout=0.1)
+                except TimeoutError:
+                    pass
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            if self._task is task:
+                self._task = None
+        if self._task is None:
+            self._state = PlaybackState.IDLE
+
     async def wait_stopped(self, timeout: float = 2.0) -> None:
         """Wait for all queued FFmpeg/playback teardown work to finish."""
-        deadline = asyncio.get_running_loop().time() + timeout
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         while self._pending_drains or (
             self._drain_worker is not None and not self._drain_worker.done()
         ):
-            remaining = deadline - asyncio.get_running_loop().time()
+            remaining = deadline - loop.time()
             if remaining <= 0:
                 logger.warning(
-                    "Playback drain timed out pending=%s",
+                    "Playback drain timed out pending=%s; forcing cleanup",
                     len(self._pending_drains),
                 )
+                await self._force_drain_pending()
                 break
+            if self._pending_drains and (
+                self._drain_worker is None or self._drain_worker.done()
+            ):
+                self._schedule_drain_worker()
             worker = self._drain_worker
             if worker is None:
-                break
+                await asyncio.sleep(0)
+                continue
             try:
                 await asyncio.wait_for(asyncio.shield(worker), timeout=remaining)
             except TimeoutError:
-                break
+                continue
 
     def pause(self) -> None:
         self._pause_event.clear()
@@ -223,13 +272,13 @@ class PlaybackEngine:
         if self._queue.needs_repeat_refill:
             await self._refill_repeat_from_subsonic()
 
-        self._stop_event = asyncio.Event()
+        generation = self._playback_generation
         self._pause_event.set()
         self._announce_next_track = announce
-        self._task = asyncio.create_task(self._playback_loop())
+        self._task = asyncio.create_task(self._playback_loop(generation))
 
-    async def _playback_loop(self) -> None:
-        while not self._stop_event.is_set():
+    async def _playback_loop(self, generation: int) -> None:
+        while not self._is_stopped(generation):
             item = self._queue.current
             if item is None:
                 self._state = PlaybackState.IDLE
@@ -240,7 +289,7 @@ class PlaybackEngine:
             self._announce_next_track = True
 
             try:
-                await self._play_item(item)
+                await self._play_item(item, generation=generation)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -250,7 +299,7 @@ class PlaybackEngine:
                     item.track.title,
                 )
 
-            if self._stop_event.is_set():
+            if self._is_stopped(generation):
                 return
 
             nxt = self._queue.on_track_finished()
@@ -287,7 +336,8 @@ class PlaybackEngine:
             return None
         return queue.refill_after_repeat(items)
 
-    async def _play_item(self, item: QueueItem) -> None:
+    async def _play_item(self, item: QueueItem, *, generation: int | None = None) -> None:
+        gen = self._playback_generation if generation is None else generation
         track = item.track
         self._active_track = track
         self._elapsed_seconds = 0.0
@@ -362,6 +412,8 @@ class PlaybackEngine:
                 probesize=self._ffmpeg_probesize,
                 analyzeduration=self._ffmpeg_analyzeduration,
             )
+            if self._is_stopped(gen):
+                return
             self._state = PlaybackState.PLAYING
             pcm_iter = transcoder.read_pcm_frames().__aiter__()
             pacer = PcmPacer(
@@ -371,14 +423,14 @@ class PlaybackEngine:
             )
             loop = asyncio.get_running_loop()
 
-            while not pacer.primed and not self._stop_event.is_set():
+            while not pacer.primed and not self._is_stopped(gen):
                 if frames_sent >= max_prebuffer_frames:
                     pacer.force_prime(loop)
                     break
                 frame = await read_next_frame()
                 if frame is None:
                     break
-                if self._stop_event.is_set():
+                if self._is_stopped(gen):
                     break
                 await self._pause_event.wait()
                 pending_batch.append(frame)
@@ -386,20 +438,20 @@ class PlaybackEngine:
                     await flush_batch()
                 pacer.delay_before_next_frame(loop)
 
-            while not self._stop_event.is_set():
+            while not self._is_stopped(gen):
                 await pacer.wait(loop)
                 frame = await read_next_frame()
                 if frame is None:
                     break
-                if self._stop_event.is_set():
+                if self._is_stopped(gen):
                     break
                 await self._pause_event.wait()
                 pending_batch.append(frame)
                 await flush_batch()
         finally:
-            if pending_batch and not self._stop_event.is_set():
+            if pending_batch and not self._is_stopped(gen):
                 await flush_batch()
-            if getattr(transcoder, "_terminated", False) is True:
+            if getattr(transcoder, "_released_to_drain", False) is True:
                 if self._active_transcoder is transcoder:
                     self._active_transcoder = None
             else:
@@ -419,7 +471,7 @@ class PlaybackEngine:
                         track.id,
                         frames_sent,
                     )
-                if code not in (0, -15, 255) and not self._stop_event.is_set():
+                if code not in (0, -15, 255) and not self._is_stopped(gen):
                     logger.warning(
                         "FFmpeg exited code=%s track_id=%s stderr=%s",
                         code,
