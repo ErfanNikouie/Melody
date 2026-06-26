@@ -154,12 +154,22 @@ class ChannelSession:
             logger.exception("Scheduled playback failed channel_id=%s", self.channel_id)
 
     def begin_stop(self, *, clear_all: bool = False) -> None:
-        """Stop playback immediately without waiting for FFmpeg or Mumble teardown."""
+        """Stop playback immediately without waiting for FFmpeg teardown."""
         self.engine.stop()
         if clear_all:
             self.queue.clear_all()
-        else:
-            self.queue.clear()
+
+    def cancel_playback_tasks(self) -> None:
+        if self._playback_start_task is not None and not self._playback_start_task.done():
+            self._playback_start_task.cancel()
+        if self._stop_drain_task is not None and not self._stop_drain_task.done():
+            self._stop_drain_task.cancel()
+
+    async def fast_disconnect(self) -> None:
+        """Stop playback and drop pending teardown without blocking on FFmpeg."""
+        self.prepare_for_shutdown()
+        self.cancel_playback_tasks()
+        self._joined = False
 
     def schedule_stop_drain(self) -> None:
         """Finish playback teardown in the background so chat commands stay responsive."""

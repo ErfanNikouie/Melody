@@ -321,7 +321,10 @@ class MumbleOrchestrator:
                     tasks=tasks,
                 )
             if destroy:
-                await self._pool.release(player.channel_id)
+                asyncio.create_task(
+                    self._pool.release(player.channel_id),
+                    name=f"release-{player.channel_id}",
+                )
                 return
         except Exception:
             logger.exception(

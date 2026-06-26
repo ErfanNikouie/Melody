@@ -73,6 +73,31 @@ def test_is_player_channel_message_accepts_whispers() -> None:
     assert is_player_channel_message(whisper, 5)
 
 
+@pytest.mark.asyncio
+async def test_skip_next_advances_queue_without_clearing() -> None:
+    messages: list[str] = []
+
+    async def send_message(text: str) -> None:
+        messages.append(text)
+
+    session = _make_test_session(join_channel=_async_true)
+    session._send_message = send_message  # noqa: SLF001
+    session.queue.play_now([_queue_item("1"), _queue_item("2")])
+
+    await session.skip_next()
+
+    assert session.queue.current is not None
+    assert session.queue.current.track.id == "2"
+    assert any("Track 2" in msg for msg in messages)
+    assert not any("Queue finished" in msg for msg in messages)
+
+
+def _queue_item(suffix: str):
+    from melody.models import QueueItem, Track
+
+    return QueueItem(track=Track(id=suffix, title=f"Track {suffix}", artist="Artist"))
+
+
 async def _async_true() -> bool:
     return True
 
