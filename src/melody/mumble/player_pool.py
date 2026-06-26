@@ -230,21 +230,26 @@ class PlayerPool:
     async def _disconnect_player(self, player: PlayerBot, channel_id: int) -> None:
         player.connection.set_text_handler(None)
         player.connection.prepare_disconnect()
-        await player.session.shutdown()
+        player.session.cancel_playback_tasks()
+        if not player.session._shutting_down:  # noqa: SLF001
+            player.session.begin_stop(clear_all=True)
         self._cancel_occupancy_timer(channel_id)
         if self._on_release:
             await self._on_release(channel_id)
-        await player.connection.stop()
+        await player.connection.fast_stop()
+        asyncio.create_task(
+            player.session.finish_stop(),
+            name=f"session-drain-{channel_id}",
+        )
 
     async def _force_disconnect_player(self, player: PlayerBot) -> None:
         player.connection.set_text_handler(None)
         player.connection.prepare_disconnect()
+        player.session.cancel_playback_tasks()
         try:
-            await asyncio.wait_for(player.session.shutdown(), timeout=3.0)
-        except TimeoutError:
-            logger.error("Player shutdown timed out channel_id=%s", player.channel_id)
+            await player.connection.fast_stop()
         except Exception:
-            logger.exception("Failed preparing forced shutdown channel_id=%s", player.channel_id)
+            logger.exception("Forced fast disconnect failed channel_id=%s", player.channel_id)
         self._cancel_occupancy_timer(player.channel_id)
         if self._on_release:
             try:
@@ -254,10 +259,10 @@ class PlayerPool:
                     "Release listener timed out channel_id=%s",
                     player.channel_id,
                 )
-        try:
-            await asyncio.wait_for(player.connection.stop(), timeout=3.0)
-        except Exception:
-            logger.exception("Forced player disconnect failed channel_id=%s", player.channel_id)
+        asyncio.create_task(
+            player.session.finish_stop(),
+            name=f"session-drain-force-{player.channel_id}",
+        )
 
     async def get(self, channel_id: int) -> PlayerBot | None:
         async with self._lock:

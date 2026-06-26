@@ -150,6 +150,30 @@ class MumbleConnection:
         except RuntimeError:
             pass
 
+    async def fast_stop(self) -> None:
+        """Disconnect from Mumble quickly; thread cleanup happens in the background."""
+        self.prepare_disconnect()
+        if self._mumble is not None:
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._mumble.stop),
+                    timeout=1.5,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "Fast mumble.stop timed out user=%s host=%s",
+                    self._username,
+                    self._host,
+                )
+        self._mumble = None
+        self._encoder_ready = False
+        if self._thread is not None and not self._thread.is_alive():
+            self._thread = None
+        try:
+            self._sync_executor.shutdown(wait=False, cancel_futures=True)
+        except RuntimeError:
+            pass
+
     def prepare_disconnect(self) -> None:
         """Stop accepting work and tell pymumble not to reconnect."""
         self._accept_events = False

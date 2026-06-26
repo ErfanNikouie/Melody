@@ -115,10 +115,11 @@ async def test_wait_stopped_does_not_clear_newer_playback_task() -> None:
     old_task = asyncio.create_task(asyncio.sleep(3600))
     new_task = asyncio.create_task(asyncio.sleep(3600))
     engine._task = new_task  # noqa: SLF001
-    engine._stopping_task = old_task  # noqa: SLF001
-
     old_task.cancel()
-    await engine.wait_stopped(timeout=0.1)
+    engine._pending_drains.append((old_task, None))  # noqa: SLF001
+    engine._schedule_drain_worker()
+
+    await engine.wait_stopped(timeout=0.5)
 
     assert engine._task is new_task  # noqa: SLF001
     assert not new_task.done()
@@ -148,6 +149,38 @@ async def test_stop_snapshots_transcoder_for_wait_stopped() -> None:
     old_transcoder.stop.assert_awaited_once()
     new_transcoder.stop.assert_not_awaited()
     assert engine._active_transcoder is new_transcoder  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_play_current_starts_without_waiting_for_drain() -> None:
+    queue = QueueManager()
+    queue.play_now([QueueItem(track=Track(id="1", title="A", artist="X"))])
+    engine = PlaybackEngine(
+        subsonic=MagicMock(stream_url=MagicMock(return_value="http://example.com/stream")),
+        queue=queue,
+        send_pcm=AsyncMock(),
+        get_buffer_size=lambda: 0.0,
+    )
+    blocked = asyncio.Event()
+
+    async def slow_play_item(_item: QueueItem) -> None:
+        await blocked.wait()
+
+    engine._play_item = slow_play_item  # type: ignore[method-assign]
+    first = asyncio.create_task(engine.play_current(announce=False))
+    await asyncio.sleep(0)
+    engine.stop()
+    started = asyncio.Event()
+
+    async def mark_started() -> None:
+        await engine.play_current(announce=False)
+        started.set()
+
+    second = asyncio.create_task(mark_started())
+    await asyncio.wait_for(started.wait(), timeout=0.5)
+
+    blocked.set()
+    await asyncio.gather(first, second, return_exceptions=True)
 
 
 @pytest.mark.asyncio

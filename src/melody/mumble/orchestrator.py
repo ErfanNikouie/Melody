@@ -147,7 +147,7 @@ class MumbleOrchestrator:
         search_tasks = self._handler.start_search_tasks(commands)
 
         try:
-            player = await self._acquire_player_for_message(message, notify=notify)
+            player, spawned = await self._acquire_player_for_message(message, notify=notify)
         except Exception as exc:
             await self._cancel_search_tasks(search_tasks)
             if message.is_private:
@@ -161,7 +161,15 @@ class MumbleOrchestrator:
                 )
             return
 
-        await self._run_commands(commands, player, message, notify=notify, search_tasks=search_tasks)
+        # First spawn posts "Joining…" to channel — command replies must go there too.
+        command_notify = None if spawned else notify
+        await self._run_commands(
+            commands,
+            player,
+            message,
+            notify=command_notify,
+            search_tasks=search_tasks,
+        )
 
     def _is_exit_noop(self, channel_id: int, commands: list[ParsedCommand]) -> bool:
         if not all(command.name in _EXIT_COMMANDS for command in commands):
@@ -178,14 +186,15 @@ class MumbleOrchestrator:
         if existing is not None and existing.connection.is_connected:
             await self._ensure_player_listener(existing)
             return existing
-        return await self._acquire_player_for_message(message, notify=None)
+        player, _spawned = await self._acquire_player_for_message(message, notify=None)
+        return player
 
     async def _acquire_player_for_message(
         self,
         message: ParsedTextMessage,
         *,
         notify: NotifyCallback | None,
-    ) -> PlayerBot:
+    ) -> tuple[PlayerBot, bool]:
         channel_id = message.sender_channel_id
         channel_name = message.sender_channel_name
         if self._pool.is_releasing(channel_id):
@@ -208,7 +217,24 @@ class MumbleOrchestrator:
             (time.monotonic() - started) * 1000,
         )
         await self._ensure_player_listener(player)
-        return player
+        if _created:
+            await self._wait_player_ready_for_chat(player)
+        return player, _created
+
+    async def _wait_player_ready_for_chat(self, player: PlayerBot) -> None:
+        """Briefly wait until the player can post channel chat after joining."""
+        deadline = asyncio.get_running_loop().time() + 2.0
+        while asyncio.get_running_loop().time() < deadline:
+            if not player.connection.is_connected:
+                await asyncio.sleep(0.05)
+                continue
+            if await player.connection.is_in_channel(player.channel_id):
+                return
+            await asyncio.sleep(0.05)
+        logger.warning(
+            "Player not ready for channel chat channel_id=%s after join",
+            player.channel_id,
+        )
 
     async def _reply_in_channel(
         self,
@@ -348,7 +374,7 @@ class MumbleOrchestrator:
             if destroy:
                 asyncio.create_task(
                     self._fast_release_player(player, message, notify=notify),
-                    name=f"release-{player.channel_id}",
+                    name=f"exit-{player.channel_id}",
                 )
                 return
         except Exception:
@@ -399,31 +425,41 @@ class MumbleOrchestrator:
         *,
         notify: NotifyCallback | None,
     ) -> None:
-        """Reply instantly, then tear down the player connection in the background."""
+        """Stop accepting commands, reply, and disconnect without blocking chat."""
         channel_id = player.channel_id
         player.connection.set_text_handler(None)
+        asyncio.create_task(
+            self._send_leaving_message(message, channel_id, notify=notify, player=player),
+            name=f"leaving-{channel_id}",
+        )
+        asyncio.create_task(
+            self._pool.release(channel_id),
+            name=f"release-{channel_id}",
+        )
+
+    async def _send_leaving_message(
+        self,
+        message: ParsedTextMessage,
+        channel_id: int,
+        *,
+        notify: NotifyCallback | None,
+        player: PlayerBot,
+    ) -> None:
         try:
-            try:
-                await asyncio.wait_for(
-                    self._reply_in_channel(
-                        message,
-                        channel_id,
-                        format_leaving_channel(),
-                        notify=notify,
-                        player=player,
-                    ),
-                    timeout=2.0,
-                )
-            except TimeoutError:
-                logger.warning("Leaving message timed out channel_id=%s", channel_id)
-        finally:
-            try:
-                await self._pool.release(channel_id)
-            except Exception:
-                logger.exception(
-                    "Background player release failed channel_id=%s",
+            await asyncio.wait_for(
+                self._reply_in_channel(
+                    message,
                     channel_id,
-                )
+                    format_leaving_channel(),
+                    notify=notify,
+                    player=player,
+                ),
+                timeout=2.0,
+            )
+        except TimeoutError:
+            logger.warning("Leaving message timed out channel_id=%s", channel_id)
+        except Exception:
+            logger.exception("Leaving message failed channel_id=%s", channel_id)
 
     async def _refresh_player_occupancy(self, player: PlayerBot) -> None:
         try:

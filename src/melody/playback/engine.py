@@ -62,8 +62,10 @@ class PlaybackEngine:
         self._active_track: Track | None = None
         self._elapsed_seconds = 0.0
         self._active_transcoder: FFmpegTranscoder | None = None
-        self._stopping_task: asyncio.Task[None] | None = None
-        self._stopping_transcoder: FFmpegTranscoder | None = None
+        self._pending_drains: list[
+            tuple[asyncio.Task[None] | None, FFmpegTranscoder | None]
+        ] = []
+        self._drain_worker: asyncio.Task[None] | None = None
 
     @property
     def playback_status(self) -> PlaybackStatus:
@@ -107,32 +109,45 @@ class PlaybackEngine:
         if transcoder is not None:
             self._active_transcoder = None
             transcoder.terminate_sync()
-        self._stopping_task = task
-        self._stopping_transcoder = transcoder
+        if task is not None or transcoder is not None:
+            self._pending_drains.append((task, transcoder))
+            self._schedule_drain_worker()
 
-    async def wait_stopped(self, timeout: float = 5.0) -> None:
-        """Wait for the playback task and any FFmpeg subprocess to finish."""
-        task = self._stopping_task
-        transcoder = self._stopping_transcoder
-        self._stopping_task = None
-        self._stopping_transcoder = None
-
-        if task is None and transcoder is None:
+    def _schedule_drain_worker(self) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
             return
+        if self._drain_worker is not None and not self._drain_worker.done():
+            return
+        self._drain_worker = loop.create_task(
+            self._drain_worker_loop(),
+            name="playback-drain",
+        )
 
-        if transcoder is None:
-            transcoder = self._active_transcoder
-            if transcoder is not None:
-                self._active_transcoder = None
+    async def _drain_worker_loop(self) -> None:
+        try:
+            while self._pending_drains:
+                task, transcoder = self._pending_drains.pop(0)
+                await self._drain_snapshot(task, transcoder)
+        finally:
+            self._drain_worker = None
+            if self._pending_drains:
+                self._schedule_drain_worker()
 
-        if task is None:
-            task = self._task
-
+    async def _drain_snapshot(
+        self,
+        task: asyncio.Task[None] | None,
+        transcoder: FFmpegTranscoder | None,
+        *,
+        task_timeout: float = 2.0,
+        transcoder_timeout: float = 3.0,
+    ) -> None:
         if transcoder is not None:
             try:
-                await asyncio.wait_for(transcoder.stop(), timeout=3.0)
+                await asyncio.wait_for(transcoder.stop(), timeout=transcoder_timeout)
             except TimeoutError:
-                logger.warning("Transcoder stop timed out during playback teardown")
+                logger.warning("Background transcoder drain timed out")
 
         if task is None:
             return
@@ -143,11 +158,11 @@ class PlaybackEngine:
                 self._state = PlaybackState.IDLE
             return
         try:
-            await asyncio.wait_for(task, timeout=timeout)
+            await asyncio.wait_for(task, timeout=task_timeout)
         except asyncio.CancelledError:
             pass
         except TimeoutError:
-            logger.warning("Playback task did not stop within %.1fs", timeout)
+            logger.warning("Background playback task drain timed out")
             if not task.done():
                 task.cancel()
                 try:
@@ -159,6 +174,27 @@ class PlaybackEngine:
                 self._task = None
             if self._task is None:
                 self._state = PlaybackState.IDLE
+
+    async def wait_stopped(self, timeout: float = 5.0) -> None:
+        """Wait for all queued FFmpeg/playback teardown work to finish."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while self._pending_drains or (
+            self._drain_worker is not None and not self._drain_worker.done()
+        ):
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                logger.warning(
+                    "Playback drain timed out pending=%s",
+                    len(self._pending_drains),
+                )
+                break
+            worker = self._drain_worker
+            if worker is None:
+                break
+            try:
+                await asyncio.wait_for(asyncio.shield(worker), timeout=remaining)
+            except TimeoutError:
+                break
 
     def pause(self) -> None:
         self._pause_event.clear()
@@ -173,7 +209,6 @@ class PlaybackEngine:
     async def play_current(self, *, announce: bool = True) -> None:
         if self._task and not self._task.done():
             self.stop()
-            await self.wait_stopped(timeout=2.0)
 
         if self._queue.needs_repeat_refill:
             await self._refill_repeat_from_subsonic()

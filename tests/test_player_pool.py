@@ -85,8 +85,6 @@ async def test_skip_next_advances_queue_without_clearing() -> None:
     session.queue.play_now([_queue_item("1"), _queue_item("2")])
 
     await session.skip_next()
-    if session._skip_restart_task is not None:  # noqa: SLF001
-        await session._skip_restart_task
 
     assert session.queue.current is not None
     assert session.queue.current.track.id == "2"

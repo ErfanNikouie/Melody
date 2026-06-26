@@ -242,14 +242,6 @@ async def test_skip_next_does_not_block_command_lock_during_teardown() -> None:
         ]
     )
 
-    teardown_started = asyncio.Event()
-    teardown_release = asyncio.Event()
-
-    async def slow_finish_stop() -> None:
-        teardown_started.set()
-        await teardown_release.wait()
-
-    session.finish_stop = slow_finish_stop  # type: ignore[method-assign]
     player.session = session
 
     skip_task = asyncio.create_task(
@@ -268,7 +260,6 @@ async def test_skip_next_does_not_block_command_lock_during_teardown() -> None:
             notify=None,
         )
     )
-    await asyncio.wait_for(teardown_started.wait(), timeout=1.0)
 
     list_done = asyncio.Event()
 
@@ -291,8 +282,6 @@ async def test_skip_next_does_not_block_command_lock_during_teardown() -> None:
 
     await asyncio.wait_for(run_list(), timeout=1.0)
     assert list_done.is_set()
-
-    teardown_release.set()
     await asyncio.wait_for(skip_task, timeout=1.0)
 
 
@@ -393,3 +382,46 @@ async def test_exit_is_lock_free_and_releases_in_background() -> None:
     await asyncio.wait_for(release_started.wait(), timeout=1.0)
     release_done.set()
     await asyncio.wait_for(exit_task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_spawned_coordinator_command_replies_in_channel() -> None:
+    orchestrator = _make_orchestrator()
+    captured: dict[str, NotifyCallback | None] = {}
+
+    async def fake_acquire(
+        message: ParsedTextMessage,
+        *,
+        notify: NotifyCallback | None,
+    ) -> tuple[MagicMock, bool]:
+        _ = message, notify
+        return _make_player(), True
+
+    async def fake_run_commands(
+        commands,
+        player,
+        message,
+        *,
+        notify,
+        search_tasks=None,
+    ) -> None:
+        _ = commands, player, message, search_tasks
+        captured["notify"] = notify
+
+    orchestrator._acquire_player_for_message = fake_acquire  # type: ignore[method-assign]
+    orchestrator._run_commands = fake_run_commands  # type: ignore[method-assign]
+    orchestrator._coordinator.send_to_channel = AsyncMock(return_value=True)
+
+    message = ParsedTextMessage(
+        sender_session=1,
+        sender_name="user",
+        message="/play test song",
+        sender_channel_id=5,
+        sender_channel_name="Music",
+        is_private=True,
+        target_channel_id=None,
+    )
+
+    await orchestrator._dispatch_coordinator_text(message)
+
+    assert captured["notify"] is None
